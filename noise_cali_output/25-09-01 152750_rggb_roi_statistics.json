@@ -1,0 +1,55 @@
+{
+  "analysis_timestamp": "2025-09-03T15:24:26.342351",
+  "analysis_type": "rggb_roi_statistics",
+  "image_dimensions": [
+    3840,
+    2160
+  ],
+  "data_type": "uint16",
+  "processing_settings": {
+    "dark_subtraction_enabled": true,
+    "clip_negative_values": true
+  },
+  "rggb_roi_statistics": {
+    "roi_corners": [
+      [
+        998,
+        660
+      ],
+      [
+        1080,
+        628
+      ],
+      [
+        1088,
+        647
+      ],
+      [
+        1006,
+        684
+      ]
+    ],
+    "channels": {
+      "R": {
+        "mean": 164.9463653564453,
+        "variance": 799.0116577148438,
+        "pixel_count": 2144
+      },
+      "G1": {
+        "mean": 220.17770385742188,
+        "variance": 1225.7152099609375,
+        "pixel_count": 2144
+      },
+      "G2": {
+        "mean": 216.28778076171875,
+        "variance": 1279.4232177734375,
+        "pixel_count": 2144
+      },
+      "B": {
+        "mean": 98.02798461914062,
+        "variance": 551.9618530273438,
+        "pixel_count": 2144
+      }
+    }
+  }
+}

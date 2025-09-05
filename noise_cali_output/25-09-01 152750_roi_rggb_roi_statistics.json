@@ -1,0 +1,39 @@
+{
+  "analysis_timestamp": "2025-09-03T15:12:59.415394",
+  "analysis_type": "rggb_roi_statistics",
+  "image_dimensions": [
+    3840,
+    2160
+  ],
+  "data_type": "uint16",
+  "processing_settings": {
+    "dark_subtraction_enabled": true,
+    "clip_negative_values": true
+  },
+  "rggb_roi_statistics": {
+    "roi_rectangle": [
+      693,
+      506,
+      67,
+      42
+    ],
+    "channels": {
+      "R": {
+        "mean": 7.51820707321167,
+        "variance": 42.367313385009766
+      },
+      "G1": {
+        "mean": 5.548340320587158,
+        "variance": 35.6416015625
+      },
+      "G2": {
+        "mean": 2.2198879718780518,
+        "variance": 15.076300621032715
+      },
+      "B": {
+        "mean": 4.763347625732422,
+        "variance": 34.76362228393555
+      }
+    }
+  }
+}

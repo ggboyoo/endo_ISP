@@ -1,0 +1,72 @@
+{
+  "analysis_timestamp": "2025-09-03T10:23:36.034273",
+  "analysis_type": "rggb_channel_analysis",
+  "image_dimensions": [
+    3840,
+    2160
+  ],
+  "data_type": "uint16",
+  "processing_settings": {
+    "dark_subtraction_enabled": true,
+    "histogram_bins": 256,
+    "clip_negative_values": true
+  },
+  "channel_statistics": {
+    "R": {
+      "mean": 162.54385375976562,
+      "std": 628.4085083007812,
+      "variance": 394897.25,
+      "min": 0.0,
+      "max": 4092.0,
+      "median": 0.0,
+      "snr": 0.2586595416069031,
+      "cv": 3.866086006164551,
+      "channel_size": [
+        1080,
+        1920
+      ]
+    },
+    "G1": {
+      "mean": 196.1600341796875,
+      "std": 734.5650024414062,
+      "variance": 539585.75,
+      "min": 0.0,
+      "max": 4092.0,
+      "median": 0.0,
+      "snr": 0.26704245805740356,
+      "cv": 3.744723081588745,
+      "channel_size": [
+        1080,
+        1920
+      ]
+    },
+    "G2": {
+      "mean": 195.3345489501953,
+      "std": 732.5618286132812,
+      "variance": 536646.875,
+      "min": 0.0,
+      "max": 4092.0,
+      "median": 0.0,
+      "snr": 0.2666458189487457,
+      "cv": 3.750293254852295,
+      "channel_size": [
+        1080,
+        1920
+      ]
+    },
+    "B": {
+      "mean": 97.25727844238281,
+      "std": 379.7690124511719,
+      "variance": 144224.5,
+      "min": 0.0,
+      "max": 3087.0,
+      "median": 0.0,
+      "snr": 0.25609588623046875,
+      "cv": 3.904787540435791,
+      "channel_size": [
+        1080,
+        1920
+      ]
+    }
+  }
+}

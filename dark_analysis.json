@@ -1,0 +1,282 @@
+{
+  "analysis_timestamp": "2025-09-01T18:49:05.026059",
+  "total_frames": 10,
+  "frame_analyses": [
+    {
+      "filename": "F:\\ZJU\\Picture\\dark\\g3\\25-09-01 154824.raw",
+      "dimensions": [
+        2160,
+        3840
+      ],
+      "dtype": "uint16",
+      "file_size_bytes": 16588800,
+      "timestamp": "2025-09-01T18:48:50.382120",
+      "statistics": {
+        "mean": 3.7920785108024693,
+        "variance": 27.388213484576777,
+        "std": 5.233374961205892,
+        "min": 3.0,
+        "max": 4095.0,
+        "median": 3.0,
+        "mad": 0.0,
+        "p1": 3.0,
+        "p5": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p95": 7.0,
+        "p99": 11.0
+      }
+    },
+    {
+      "filename": "F:\\ZJU\\Picture\\dark\\g3\\25-09-01 154827.raw",
+      "dimensions": [
+        2160,
+        3840
+      ],
+      "dtype": "uint16",
+      "file_size_bytes": 16588800,
+      "timestamp": "2025-09-01T18:48:50.698636",
+      "statistics": {
+        "mean": 3.7921378279320987,
+        "variance": 27.99256202884298,
+        "std": 5.290799753236081,
+        "min": 3.0,
+        "max": 4095.0,
+        "median": 3.0,
+        "mad": 0.0,
+        "p1": 3.0,
+        "p5": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p95": 7.0,
+        "p99": 11.0
+      }
+    },
+    {
+      "filename": "F:\\ZJU\\Picture\\dark\\g3\\25-09-01 154828.raw",
+      "dimensions": [
+        2160,
+        3840
+      ],
+      "dtype": "uint16",
+      "file_size_bytes": 16588800,
+      "timestamp": "2025-09-01T18:48:51.021834",
+      "statistics": {
+        "mean": 3.818179976851852,
+        "variance": 30.76320112424415,
+        "std": 5.546458430768606,
+        "min": 3.0,
+        "max": 4095.0,
+        "median": 3.0,
+        "mad": 0.0,
+        "p1": 3.0,
+        "p5": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p95": 7.0,
+        "p99": 11.0
+      }
+    },
+    {
+      "filename": "F:\\ZJU\\Picture\\dark\\g3\\25-09-01 154829.raw",
+      "dimensions": [
+        2160,
+        3840
+      ],
+      "dtype": "uint16",
+      "file_size_bytes": 16588800,
+      "timestamp": "2025-09-01T18:48:51.319668",
+      "statistics": {
+        "mean": 3.788556616512346,
+        "variance": 29.26248980514724,
+        "std": 5.409481472853682,
+        "min": 3.0,
+        "max": 4095.0,
+        "median": 3.0,
+        "mad": 0.0,
+        "p1": 3.0,
+        "p5": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p95": 7.0,
+        "p99": 11.0
+      }
+    },
+    {
+      "filename": "F:\\ZJU\\Picture\\dark\\g3\\25-09-01 154830.raw",
+      "dimensions": [
+        2160,
+        3840
+      ],
+      "dtype": "uint16",
+      "file_size_bytes": 16588800,
+      "timestamp": "2025-09-01T18:48:51.610316",
+      "statistics": {
+        "mean": 3.788716724537037,
+        "variance": 28.707881561151577,
+        "std": 5.357973643193066,
+        "min": 3.0,
+        "max": 4095.0,
+        "median": 3.0,
+        "mad": 0.0,
+        "p1": 3.0,
+        "p5": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p95": 7.0,
+        "p99": 11.0
+      }
+    },
+    {
+      "filename": "F:\\ZJU\\Picture\\dark\\g3\\25-09-01 154831.raw",
+      "dimensions": [
+        2160,
+        3840
+      ],
+      "dtype": "uint16",
+      "file_size_bytes": 16588800,
+      "timestamp": "2025-09-01T18:48:51.915290",
+      "statistics": {
+        "mean": 3.787635513117284,
+        "variance": 29.66540769045172,
+        "std": 5.446595972756904,
+        "min": 3.0,
+        "max": 4095.0,
+        "median": 3.0,
+        "mad": 0.0,
+        "p1": 3.0,
+        "p5": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p95": 7.0,
+        "p99": 11.0
+      }
+    },
+    {
+      "filename": "F:\\ZJU\\Picture\\dark\\g3\\25-09-01 154832.raw",
+      "dimensions": [
+        2160,
+        3840
+      ],
+      "dtype": "uint16",
+      "file_size_bytes": 16588800,
+      "timestamp": "2025-09-01T18:48:52.232291",
+      "statistics": {
+        "mean": 3.7893359375,
+        "variance": 32.756460737647494,
+        "std": 5.7233260205624745,
+        "min": 3.0,
+        "max": 4095.0,
+        "median": 3.0,
+        "mad": 0.0,
+        "p1": 3.0,
+        "p5": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p95": 7.0,
+        "p99": 11.0
+      }
+    },
+    {
+      "filename": "F:\\ZJU\\Picture\\dark\\g3\\25-09-01 154833.raw",
+      "dimensions": [
+        2160,
+        3840
+      ],
+      "dtype": "uint16",
+      "file_size_bytes": 16588800,
+      "timestamp": "2025-09-01T18:48:52.552959",
+      "statistics": {
+        "mean": 3.79608024691358,
+        "variance": 34.950214573807315,
+        "std": 5.911870649279068,
+        "min": 3.0,
+        "max": 4095.0,
+        "median": 3.0,
+        "mad": 0.0,
+        "p1": 3.0,
+        "p5": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p95": 7.0,
+        "p99": 11.0
+      }
+    },
+    {
+      "filename": "F:\\ZJU\\Picture\\dark\\g3\\25-09-01 154834.raw",
+      "dimensions": [
+        2160,
+        3840
+      ],
+      "dtype": "uint16",
+      "file_size_bytes": 16588800,
+      "timestamp": "2025-09-01T18:48:52.858726",
+      "statistics": {
+        "mean": 3.8198181905864197,
+        "variance": 28.04263771771687,
+        "std": 5.295529975150445,
+        "min": 3.0,
+        "max": 4095.0,
+        "median": 3.0,
+        "mad": 0.0,
+        "p1": 3.0,
+        "p5": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p95": 7.0,
+        "p99": 11.0
+      }
+    },
+    {
+      "filename": "F:\\ZJU\\Picture\\dark\\g3\\25-09-01 154835.raw",
+      "dimensions": [
+        2160,
+        3840
+      ],
+      "dtype": "uint16",
+      "file_size_bytes": 16588800,
+      "timestamp": "2025-09-01T18:48:53.154974",
+      "statistics": {
+        "mean": 3.7908106674382718,
+        "variance": 26.478154367895495,
+        "std": 5.1456927976605344,
+        "min": 3.0,
+        "max": 4095.0,
+        "median": 3.0,
+        "mad": 0.0,
+        "p1": 3.0,
+        "p5": 3.0,
+        "p25": 3.0,
+        "p75": 3.0,
+        "p95": 7.0,
+        "p99": 11.0
+      }
+    }
+  ],
+  "overall_folder_statistics": {
+    "overall_mean": 3.796335021219136,
+    "overall_variance": 29.600856128115907,
+    "overall_std": 5.440666882663917,
+    "overall_min": 3.0,
+    "overall_max": 4095.0,
+    "overall_median": 3.0,
+    "overall_mad": 0.0,
+    "overall_p1": 3.0,
+    "overall_p5": 3.0,
+    "overall_p25": 3.0,
+    "overall_p75": 3.0,
+    "overall_p95": 7.0,
+    "overall_p99": 11.0,
+    "total_pixels": 82944000,
+    "total_images": 10
+  },
+  "temporal_statistics": {
+    "mean_of_means": 3.796335021219136,
+    "std_of_means": 0.011568014848829864,
+    "mean_of_variances": 29.60072230914816,
+    "std_of_variances": 2.4597213758605823,
+    "mean_of_stds": 5.436110367666675,
+    "std_of_stds": 0.22232044371817236,
+    "temporal_stability": 0.00304715331607245
+  }
+}

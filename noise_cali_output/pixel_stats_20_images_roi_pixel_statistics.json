@@ -1,0 +1,39 @@
+{
+  "analysis_timestamp": "2025-09-02T19:44:51.242523",
+  "analysis_type": "pixel_statistics_across_images",
+  "image_dimensions": [
+    3840,
+    2160
+  ],
+  "data_type": "uint16",
+  "processing_settings": {
+    "dark_subtraction_enabled": true,
+    "histogram_bins": 256,
+    "clip_negative_values": true
+  },
+  "summary_statistics": {
+    "overall_mean": 1372.1451511568378,
+    "overall_var": 4967.747507020715,
+    "overall_std": 70.48224958825246,
+    "total_pixels": 933666,
+    "valid_files": 20,
+    "image_shape": [
+      2160,
+      3840
+    ],
+    "mean_statistics": {
+      "mean": 1372.1451511568378,
+      "std": 1130.3971720583968,
+      "min": 0.0,
+      "max": 4092.0,
+      "median": 1078.4
+    },
+    "variance_statistics": {
+      "mean": 4967.747507020715,
+      "std": 5229.125637679882,
+      "min": 0.0,
+      "max": 60823.83999999985,
+      "median": 3207.8400000003166
+    }
+  }
+}

@@ -60,6 +60,11 @@ DEMOSAIC_OUTPUT = True             # 是否输出去马赛克后的彩色图像
 
 # CCM矫正参数
 CCM_MATRIX_PATH = r" F:\ZJU\Picture\ccm\ccm_2\ccm_output_20250905_162714"  # CCM矩阵文件路径
+CCM_MATRIX = [
+    [1.7801320111582375, -0.7844420268663381, 0.004310015708100662],
+    [-0.24377094860030846, 2.4432181685707977, -1.1994472199704893],
+    [-0.4715762768203783, -0.7105721829898775, 2.182148459810256]
+]  # CCM矩阵（如果提供则优先使用，不需要从文件加载）
 
 # 白平衡参数
 WB_PARAMS_PATH = r"F:\ZJU\Picture\wb\wb_output"   # 白平衡参数文件路径
@@ -349,8 +354,9 @@ def process_single_image(raw_file: str, dark_data: np.ndarray, lens_shading_para
                         width: int, height: int, data_type: str, wb_params: Optional[Dict] = None,
                         dark_subtraction_enabled: bool = True, lens_shading_enabled: bool = True,
                         white_balance_enabled: bool = True, ccm_enabled: bool = True,
-                        ccm_matrix_path: Optional[str] = None, gamma_correction_enabled: bool = True,
-                        gamma_value: float = 2.2, demosaic_output: bool = True) -> Dict:
+                        ccm_matrix_path: Optional[str] = None, ccm_matrix: Optional[np.ndarray] = None,
+                        gamma_correction_enabled: bool = True, gamma_value: float = 2.2, 
+                        demosaic_output: bool = True) -> Dict:
     """
     Process a single RAW image through the complete ISP pipeline
     
@@ -366,7 +372,8 @@ def process_single_image(raw_file: str, dark_data: np.ndarray, lens_shading_para
         lens_shading_enabled: Enable lens shading correction
         white_balance_enabled: Enable white balance correction
         ccm_enabled: Enable CCM correction
-        ccm_matrix_path: Path to CCM matrix file
+        ccm_matrix_path: Path to CCM matrix file (optional if ccm_matrix provided)
+        ccm_matrix: CCM matrix as numpy array (optional, takes priority over ccm_matrix_path)
         gamma_correction_enabled: Enable gamma correction
         gamma_value: Gamma value for correction (default 2.2)
         demosaic_output: Enable demosaicing output
@@ -425,15 +432,25 @@ def process_single_image(raw_file: str, dark_data: np.ndarray, lens_shading_para
                 wb_corrected_8bit = (color_img_16bit.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
                 
                 # 6. CCM correction in 16-bit domain
-                if ccm_enabled and ccm_matrix_path is not None:
+                if ccm_enabled:
                     print(f"  6. Applying CCM correction in 16-bit domain...")
-                    ccm_result = load_ccm_matrix(ccm_matrix_path)
-                    if ccm_result is not None:
-                        ccm_matrix, matrix_type = ccm_result
+                    
+                    # Priority: use ccm_matrix if provided, otherwise load from file
+                    if ccm_matrix is not None:
+                        print(f"  6. Using provided CCM matrix: {ccm_matrix.shape}")
+                        matrix_type = 'linear3x3'  # Default to linear3x3 for direct matrix input
                         color_img_16bit = apply_ccm_16bit(color_img_16bit, ccm_matrix, matrix_type)
-                        print(f"  6. CCM correction applied to 16-bit image")
+                        print(f"  6. CCM correction applied to 16-bit image using provided matrix")
+                    elif ccm_matrix_path is not None:
+                        ccm_result = load_ccm_matrix(ccm_matrix_path)
+                        if ccm_result is not None:
+                            ccm_matrix_loaded, matrix_type = ccm_result
+                            color_img_16bit = apply_ccm_16bit(color_img_16bit, ccm_matrix_loaded, matrix_type)
+                            print(f"  6. CCM correction applied to 16-bit image using loaded matrix")
+                        else:
+                            print(f"  6. CCM correction failed, skipping...")
                     else:
-                        print(f"  6. CCM correction failed, skipping...")
+                        print(f"  6. No CCM matrix provided, skipping CCM correction...")
                 else:
                     print(f"  6. CCM correction skipped")
                 
@@ -638,6 +655,7 @@ def main():
     # CCM parameters
     ccm_enabled = CCM_ENABLED
     ccm_matrix_path = CCM_MATRIX_PATH
+    ccm_matrix = np.array(CCM_MATRIX) if CCM_MATRIX else None
     
     # Process images
     input_path = Path(INPUT_PATH)
@@ -673,6 +691,7 @@ def main():
             white_balance_enabled=white_balance_enabled,
             ccm_enabled=ccm_enabled,
             ccm_matrix_path=ccm_matrix_path,
+            ccm_matrix=ccm_matrix,
             gamma_correction_enabled=GAMMA_CORRECTION_ENABLED,
             gamma_value=GAMMA_VALUE,
             demosaic_output=DEMOSAIC_OUTPUT

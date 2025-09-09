@@ -18,6 +18,7 @@ from datetime import datetime
 # Import functions from raw_reader.py
 try:
     from raw_reader import read_raw_image, demosaic_image_corrected_fixed
+    from demosaic_easy import demosaic_easy
 except ImportError:
     print("Error: raw_reader.py not found in the same directory!")
     print("Please ensure raw_reader.py is in the same directory as this script.")
@@ -36,7 +37,7 @@ except ImportError:
 # ============================================================================
 
 # 输入路径配置
-INPUT_PATH = r"F:\ZJU\Picture\ccm\ccm_2\dark_24\25-09-05 103520.raw"# 待处理的RAW图像路径
+INPUT_PATH = r"F:\ZJU\Picture\invert_isp\inverted_output.raw"# 待处理的RAW图像路径
 DARK_RAW_PATH = r"F:\ZJU\Picture\dark\g3\average_dark.raw"  # 暗电流图像路径
 LENS_SHADING_PARAMS_DIR = r"F:\ZJU\Picture\lens shading\new"  # 镜头阴影矫正参数目录
 
@@ -67,7 +68,7 @@ CCM_MATRIX = [
 ]  # CCM矩阵（如果提供则优先使用，不需要从文件加载）
 
 # 白平衡参数
-WB_PARAMS_PATH = r"F:\ZJU\Picture\wb\wb_output"   # 白平衡参数文件路径
+WB_PARAMS_PATH = r"F:\ZJU\Picture\wb\wb_output"   # 白平衡参数文件路径   
 
 # 伽马变换参数
 GAMMA_VALUE = 2.2                  # 伽马值（2.2为sRGB标准）
@@ -327,14 +328,14 @@ def apply_ccm_16bit(color_image: np.ndarray, ccm_matrix: np.ndarray, matrix_type
     try:
         # Convert to float for matrix operations
         img_float = color_image.astype(np.float64)
-        
+        img_rgb = img_float[:, :, [2, 1, 0]]
         if matrix_type == 'linear3x3':
             # 3x3 linear transformation
-            corrected = np.dot(img_float.reshape(-1, 3), ccm_matrix.T).reshape(img_float.shape)
+            corrected = np.dot(img_rgb.reshape(-1, 3), ccm_matrix.T).reshape(img_float.shape)
         elif matrix_type == 'affine3x4':
             # 3x4 affine transformation (with bias)
-            img_flat = img_float.reshape(-1, 3)
-            img_with_bias = np.column_stack([img_flat, np.ones(img_flat.shape[0])])
+            img_rgb = img_rgb.reshape(-1, 3)
+            img_with_bias = np.column_stack([img_rgb, np.ones(img_rgb.shape[0])])
             corrected_flat = np.dot(img_with_bias, ccm_matrix.T)
             corrected = corrected_flat.reshape(img_float.shape)
         else:
@@ -342,7 +343,8 @@ def apply_ccm_16bit(color_image: np.ndarray, ccm_matrix: np.ndarray, matrix_type
         
         # Clip to valid range (12-bit data in 16-bit container)
         corrected = np.clip(corrected, 0, 4095).astype(np.uint16)
-        
+
+        corrected = corrected[:, :, [2, 1, 0]]
         print(f"  CCM correction applied: {corrected.shape}, range: {np.min(corrected)}-{np.max(corrected)}")
         return corrected
         
@@ -413,6 +415,7 @@ def process_single_image(raw_file: str, dark_data: np.ndarray, lens_shading_para
         # 4. Demosaic in 16-bit domain
         if demosaic_output:
             print(f"  4. Demosaicing in 16-bit domain...")
+            # color_img_16bit = demosaic_easy(lens_corrected,'rggb')
             color_img_16bit = demosaic_16bit(lens_corrected, 'rggb')
             if color_img_16bit is not None:
                 print(f"  4. 16-bit color image: {color_img_16bit.shape}, range: {np.min(color_img_16bit)}-{np.max(color_img_16bit)}")

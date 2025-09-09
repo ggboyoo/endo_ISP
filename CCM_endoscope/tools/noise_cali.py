@@ -30,8 +30,8 @@ except ImportError:
 # ============================================================================
 
 # 输入路径配置
-INPUT_PATH = r"F:\ZJU\Picture\denoise\g6\1.raw"  # 灰阶板图RAW文件夹路径
-DARK_RAW_PATH = r"F:\ZJU\Picture\dark\g3\average_dark.raw"  # 暗电流图像路径（可选）
+INPUT_PATH = r"F:\ZJU\Picture\denoise\g8\1.raw"  # 灰阶板图RAW文件夹路径
+DARK_RAW_PATH = r"F:\ZJU\Picture\dark\g8\average_dark.raw"  # 暗电流图像路径（可选）
 
 # 图像参数配置
 IMAGE_WIDTH = 3840      # 图像宽度
@@ -40,7 +40,7 @@ IMAGE_HEIGHT = 2160     # 图像高度
 DATA_TYPE = 'uint16'    # 数据类型
 
 # 输出配置
-OUTPUT_DIRECTORY =  r"F:\ZJU\Picture\denoise\g3"  # 输出目录（None为自动生成）
+OUTPUT_DIRECTORY =  r"F:\ZJU\Picture\denoise\g8"  # 输出目录（None为自动生成）
 GENERATE_PLOTS = True   # 是否生成直方图
 SAVE_PLOTS = True       # 是否保存直方图文件
 SAVE_DATA = True        # 是否保存噪声统计数据
@@ -2026,7 +2026,7 @@ def main():
                 
                 # Save RGGB ROI data
                 if SAVE_DATA:
-                    output_dir = Path(OUTPUT_DIRECTORY) if OUTPUT_DIRECTORY else Path("noise_cali_output")
+                    output_dir = Path(OUTPUT_DIRECTORY) if OUTPUT_DIRECTORY else Path("noise_cali_output_average")
                     output_dir.mkdir(exist_ok=True)
                     
                     base_filename = Path(raw_files[0]).stem

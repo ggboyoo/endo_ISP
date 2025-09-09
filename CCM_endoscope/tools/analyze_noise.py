@@ -18,8 +18,8 @@ plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
 # 默认配置
-DEFAULT_EXCEL_PATH = r"F:\ZJU\Picture\denoise\g3/rggb_analysis_results.xlsx"
-DEFAULT_OUTPUT_DIR = r"F:\ZJU\Picture\denoise\g3/noise_analysis_output"
+DEFAULT_EXCEL_PATH = r"F:\ZJU\Picture\denoise\g7/rggb_analysis_results.xlsx"
+DEFAULT_OUTPUT_DIR = r"F:\ZJU\Picture\denoise\g7/noise_analysis_output"
 
 def load_excel_data(excel_path: str) -> pd.DataFrame:
     """

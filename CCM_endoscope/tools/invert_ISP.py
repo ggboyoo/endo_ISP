@@ -17,19 +17,47 @@ import cv2
 import os
 import json
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 from datetime import datetime
 import argparse
 
 # 导入现有模块
 try:
-    from ccm_apply import load_matrix_from_json, apply_ccm
+    from ccm_apply import load_matrix_from_json, apply_ccm, imread_unicode, imwrite_unicode
     from lens_shading import load_correction_parameters, shading_correct
     from raw_reader import read_raw_image
     from demosaic_easy import demosaic_easy
 except ImportError as e:
     print(f"Warning: Could not import some modules: {e}")
     print("Some features may not be available.")
+    # 如果导入失败，定义备用函数
+    def imread_unicode(path: str, flags: int = cv2.IMREAD_COLOR):
+        """备用unicode图像读取函数"""
+        if not os.path.exists(path):
+            return None
+        try:
+            data = np.fromfile(path, dtype=np.uint8)
+            if data.size == 0:
+                return None
+            img = cv2.imdecode(data, flags)
+            return img
+        except Exception:
+            return None
+    
+    def imwrite_unicode(path: str, image_bgr: np.ndarray, params: Optional[List[int]] = None) -> bool:
+        """备用unicode图像保存函数"""
+        try:
+            ext = os.path.splitext(path)[1]
+            if ext == "":
+                ext = ".jpg"
+                path = path + ext
+            success, buf = cv2.imencode(ext, image_bgr, params if params is not None else [])
+            if not success:
+                return False
+            buf.tofile(path)
+            return True
+        except Exception:
+            return False
 
 # ============================================================================
 # 配置参数
@@ -38,7 +66,7 @@ except ImportError as e:
 # 默认配置 - 与ISP.py保持一致
 DEFAULT_CONFIG = {
     # 输入输出配置
-    'INPUT_IMAGE_PATH': r"F:\ZJU\Picture\ccm\25-09-01 160527_processed_16bit.png",  # 输入sRGB图像路径
+    'INPUT_IMAGE_PATH': r"F:\手术视频-浙大团队分析\Storz\frame\0.png",  # 输入sRGB图像路径
     'OUTPUT_RAW_PATH': r"F:\ZJU\Picture\invert_isp\inverted_output.raw",   # 输出RAW文件路径
     'CCM_MATRIX_PATH': r"F:\ZJU\Picture\ccm\ccm_2\ccm_output_20250905_162714",  # CCM矩阵文件路径
     'WB_PARAMS_PATH': r"F:\ZJU\Picture\wb\wb_output",    # 白平衡参数文件路径
@@ -46,10 +74,17 @@ DEFAULT_CONFIG = {
     'DARK_RAW_PATH': r"F:\ZJU\Picture\dark\g3\average_dark.raw",  # 暗电流图像路径
     
     # 图像参数
-    'IMAGE_WIDTH': None,       # 图像宽度（自动检测）
-    'IMAGE_HEIGHT': None,      # 图像高度（自动检测）
+    'RESOLUTION': 'auto',      # 分辨率选择: '1k', '4k', 'auto'
+    'IMAGE_WIDTH': None,       # 图像宽度（自动检测或根据分辨率设置）
+    'IMAGE_HEIGHT': None,      # 图像高度（自动检测或根据分辨率设置）
     'BAYER_PATTERN': 'rggb',   # Bayer模式
-    'DATA_TYPE': 'uint16',     # 数据类型
+    'DATA_TYPE': 'uint16',     # 数据类型（固定为uint16）
+    
+    # 分辨率定义
+    'RESOLUTIONS': {
+        '1k': {'width': 1920, 'height': 1080, 'name': '1K (1920x1080)'},
+        '4k': {'width': 3840, 'height': 2160, 'name': '4K (3840x2160)'}
+    },
     
     # 处理选项
     'GAMMA_VALUE': 2.2,        # 伽马值（用于逆伽马校正）
@@ -63,6 +98,10 @@ DEFAULT_CONFIG = {
     'WHITE_BALANCE_ENABLED': True,      # 是否启用白平衡逆校正
     'CCM_ENABLED': True,                # 是否启用CCM逆校正
     'GAMMA_CORRECTION_ENABLED': True,   # 是否启用伽马逆校正
+    
+    # 尺寸检查选项
+    'CHECK_DIMENSIONS': True,            # 是否检查尺寸匹配
+    'SKIP_ON_DIMENSION_MISMATCH': True,  # 尺寸不匹配时是否跳过该步骤
     
     # 显示选项
     'DISPLAY_RAW_GRAYSCALE': True,      # 是否显示RAW图为灰度图
@@ -142,11 +181,11 @@ def load_image_as_12bit(image_path: str) -> Tuple[np.ndarray, int, int]:
     # 读取图像
     if os.path.exists(image_path):
         try:
-            # 使用OpenCV读取
-            img_bgr = cv2.imread(image_path, cv2.IMREAD_COLOR)
+            # 优先使用unicode读取（支持中文路径）
+            img_bgr = imread_unicode(image_path, cv2.IMREAD_COLOR)
             if img_bgr is None:
-                # 尝试使用unicode读取
-                img_bgr = imread_unicode(image_path, cv2.IMREAD_COLOR)
+                # 如果unicode读取失败，尝试标准OpenCV读取
+                img_bgr = cv2.imread(image_path, cv2.IMREAD_COLOR)
         except:
             img_bgr = None
     else:
@@ -543,20 +582,30 @@ def save_intermediate_image(img_data: np.ndarray, output_path: str, is_12bit: bo
         output_path: 输出文件路径
         is_12bit: 是否为12bit数据
     """
+    # 确保输出目录存在
+    output_dir = Path(output_path).parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
     if not is_12bit:
         # 8bit数据直接保存
-        cv2.imwrite(output_path, img_data)
+        success = imwrite_unicode(output_path, img_data)
+        if not success:
+            cv2.imwrite(output_path, img_data)
     else:
         # 12bit数据需要转换为8bit保存
         if len(img_data.shape) == 3:
             # 彩色图像
             img_8bit = (img_data.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
             img_bgr = cv2.cvtColor(img_8bit, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(output_path, img_bgr)
+            success = imwrite_unicode(output_path, img_bgr)
+            if not success:
+                cv2.imwrite(output_path, img_bgr)
         else:
             # 灰度图像
             img_8bit = (img_data.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
-            cv2.imwrite(output_path, img_8bit)
+            success = imwrite_unicode(output_path, img_8bit)
+            if not success:
+                cv2.imwrite(output_path, img_8bit)
     
     print(f"  Intermediate image saved: {output_path}")
 
@@ -593,8 +642,73 @@ def display_raw_as_grayscale(raw_data: np.ndarray, title: str = "RAW Image", sav
     
     # 保存图像（如果提供了路径）
     if save_path:
-        cv2.imwrite(save_path, img_8bit)
+        # 确保输出目录存在
+        output_dir = Path(save_path).parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        success = imwrite_unicode(save_path, img_8bit)
+        if not success:
+            cv2.imwrite(save_path, img_8bit)
         print(f"  Grayscale image saved: {save_path}")
+
+def set_resolution_config(config: Dict[str, Any], resolution: str) -> None:
+    """
+    根据分辨率设置配置参数
+    
+    Args:
+        config: 配置字典
+        resolution: 分辨率选择 ('1k', '4k', 'auto')
+    """
+    if resolution in config['RESOLUTIONS']:
+        res_info = config['RESOLUTIONS'][resolution]
+        config['IMAGE_WIDTH'] = res_info['width']
+        config['IMAGE_HEIGHT'] = res_info['height']
+        print(f"设置分辨率: {res_info['name']}")
+    elif resolution == 'auto':
+        print("使用自动检测分辨率")
+    else:
+        print(f"未知分辨率: {resolution}，使用自动检测")
+
+def check_dimension_compatibility(data: np.ndarray, target_width: int, target_height: int, 
+                                 data_name: str = "data", config: Dict = None) -> bool:
+    """
+    检查数据尺寸是否与目标尺寸兼容
+    
+    Args:
+        data: 要检查的数据数组
+        target_width: 目标宽度
+        target_height: 目标高度
+        data_name: 数据名称（用于日志）
+        config: 配置字典，用于控制检查行为
+        
+    Returns:
+        True if compatible, False otherwise
+    """
+    if data is None:
+        return False
+    
+    # 如果配置中禁用了尺寸检查，直接返回True
+    if config and not config.get('CHECK_DIMENSIONS', True):
+        print(f"  ⚠️  Dimension check disabled for {data_name}")
+        return True
+    
+    data_height, data_width = data.shape[:2]
+    
+    if data_width == target_width and data_height == target_height:
+        print(f"  ✅ {data_name} dimensions match: {data_width}x{data_height}")
+        return True
+    else:
+        print(f"  ⚠️  {data_name} dimensions mismatch:")
+        print(f"      Expected: {target_width}x{target_height}")
+        print(f"      Actual: {data_width}x{data_height}")
+        
+        # 根据配置决定是否跳过
+        if config and config.get('SKIP_ON_DIMENSION_MISMATCH', True):
+            print(f"      Skipping {data_name} correction...")
+            return False
+        else:
+            print(f"      Proceeding with {data_name} correction despite mismatch...")
+            return True
 
 def create_comparison_plot(original: np.ndarray, processed: np.ndarray, 
                           title: str = "RAW Comparison", save_path: str = None) -> None:
@@ -658,11 +772,16 @@ def invert_isp_pipeline(image_path: str, config: Dict[str, Any]) -> Dict[str, An
     print("Inverse ISP Processing Pipeline")
     print("=" * 60)
     print(f"Input image: {image_path}")
+    
+    # 设置分辨率
+    set_resolution_config(config, config['RESOLUTION'])
+    
     if config['IMAGE_WIDTH'] and config['IMAGE_HEIGHT']:
         print(f"Target size: {config['IMAGE_WIDTH']}x{config['IMAGE_HEIGHT']}")
     else:
         print("Target size: Auto-detected from image")
     print(f"Bayer pattern: {config['BAYER_PATTERN']}")
+    print(f"Data type: {config['DATA_TYPE']}")
     print("=" * 60)
     
     results = {}
@@ -766,32 +885,51 @@ def invert_isp_pipeline(image_path: str, config: Dict[str, Any]) -> Dict[str, An
             print("\n6. Applying inverse lens shading correction...")
             lens_shading_params = load_correction_parameters(config['LENS_SHADING_PARAMS_DIR'])
             if lens_shading_params is not None:
-                raw_data = inverse_lens_shading_correction(raw_data, lens_shading_params)
-                results['step6_inverse_lens_shading'] = raw_data
-                
-                if config['SAVE_INTERMEDIATE']:
-                    output_dir = Path(config['OUTPUT_RAW_PATH']).parent
-                    save_intermediate_image(raw_data, str(output_dir / "step6_inverse_lens_shading.png"), is_12bit=False)
+                # 检查镜头阴影参数是否与图像尺寸匹配
+                if 'correction_map' in lens_shading_params:
+                    correction_map = lens_shading_params['correction_map']
+                    if check_dimension_compatibility(correction_map, actual_width, actual_height, "lens shading correction map", config):
+                        raw_data = inverse_lens_shading_correction(raw_data, lens_shading_params)
+                        results['step6_inverse_lens_shading'] = raw_data
+                        
+                        if config['SAVE_INTERMEDIATE']:
+                            output_dir = Path(config['OUTPUT_RAW_PATH']).parent
+                            save_intermediate_image(raw_data, str(output_dir / "step6_inverse_lens_shading.png"), is_12bit=False)
+                    else:
+                        print("  Skipping lens shading correction due to dimension mismatch")
+                        results['step6_inverse_lens_shading'] = raw_data  # 保持原始数据
+                else:
+                    print("  No correction map found in lens shading parameters, skipping...")
+                    results['step6_inverse_lens_shading'] = raw_data  # 保持原始数据
             else:
                 print("  Failed to load lens shading parameters, skipping...")
+                results['step6_inverse_lens_shading'] = raw_data  # 保持原始数据
         else:
             print("\n6. Skipping inverse lens shading correction")
+            results['step6_inverse_lens_shading'] = raw_data  # 保持原始数据
         
         # 7. 逆暗电流校正
         if config['DARK_SUBTRACTION_ENABLED'] and config.get('DARK_RAW_PATH'):
             print("\n7. Applying inverse dark current correction...")
             dark_data = load_dark_reference(config['DARK_RAW_PATH'], config['IMAGE_WIDTH'], config['IMAGE_HEIGHT'], config['DATA_TYPE'])
             if dark_data is not None:
-                raw_data = inverse_dark_subtraction(raw_data, dark_data)
-                results['step7_inverse_dark'] = raw_data
-                
-                if config['SAVE_INTERMEDIATE']:
-                    output_dir = Path(config['OUTPUT_RAW_PATH']).parent
-                    save_intermediate_image(raw_data, str(output_dir / "step7_inverse_dark.png"), is_12bit=False)
+                # 检查暗电流数据是否与图像尺寸匹配
+                if check_dimension_compatibility(dark_data, actual_width, actual_height, "dark reference", config):
+                    raw_data = inverse_dark_subtraction(raw_data, dark_data)
+                    results['step7_inverse_dark'] = raw_data
+                    
+                    if config['SAVE_INTERMEDIATE']:
+                        output_dir = Path(config['OUTPUT_RAW_PATH']).parent
+                        save_intermediate_image(raw_data, str(output_dir / "step7_inverse_dark.png"), is_12bit=False)
+                else:
+                    print("  Skipping dark current correction due to dimension mismatch")
+                    results['step7_inverse_dark'] = raw_data  # 保持原始数据
             else:
                 print("  Failed to load dark reference, skipping...")
+                results['step7_inverse_dark'] = raw_data  # 保持原始数据
         else:
             print("\n7. Skipping inverse dark current correction")
+            results['step7_inverse_dark'] = raw_data  # 保持原始数据
         
         # 8. 保存RAW数据
         print("\n8. Saving RAW data...")
@@ -859,8 +997,10 @@ def main():
     parser = argparse.ArgumentParser(description='Inverse ISP Processing - Convert sRGB to RAW')
     parser.add_argument('--input', '-i', help='Input sRGB image path (optional, uses default if not provided)')
     parser.add_argument('--output', '-o', help='Output RAW file path (optional, uses default if not provided)')
-    parser.add_argument('--width', '-W', type=int, help='Image width (optional, auto-detected from image if not provided)')
-    parser.add_argument('--height', '-H', type=int, help='Image height (optional, auto-detected from image if not provided)')
+    parser.add_argument('--resolution', '-r', choices=['1k', '4k', 'auto'], 
+                       default=DEFAULT_CONFIG['RESOLUTION'], help='Resolution preset: 1k (1920x1080), 4k (3840x2160), or auto')
+    parser.add_argument('--width', '-W', type=int, help='Image width (optional, overrides resolution preset)')
+    parser.add_argument('--height', '-H', type=int, help='Image height (optional, overrides resolution preset)')
     parser.add_argument('--bayer', '-b', choices=['rggb', 'bggr', 'grbg', 'gbrg'], 
                        default=DEFAULT_CONFIG['BAYER_PATTERN'], help='Bayer pattern')
     parser.add_argument('--ccm', help='CCM matrix file path')
@@ -883,15 +1023,29 @@ def main():
     parser.add_argument('--no-save-grayscale', action='store_true', help='Do not save RAW as grayscale')
     parser.add_argument('--no-comparison', action='store_true', help='Do not create comparison plot')
     
+    # 尺寸检查参数
+    parser.add_argument('--no-check-dimensions', action='store_true', help='Disable dimension compatibility checking')
+    parser.add_argument('--force-correction', action='store_true', help='Force correction even if dimensions mismatch')
+    
     args = parser.parse_args()
     
     # 构建配置
     config = DEFAULT_CONFIG.copy()
     config['INPUT_IMAGE_PATH'] = args.input if args.input else DEFAULT_CONFIG['INPUT_IMAGE_PATH']
     config['OUTPUT_RAW_PATH'] = args.output if args.output else DEFAULT_CONFIG['OUTPUT_RAW_PATH']
-    config['IMAGE_WIDTH'] = args.width if args.width else DEFAULT_CONFIG['IMAGE_WIDTH']
-    config['IMAGE_HEIGHT'] = args.height if args.height else DEFAULT_CONFIG['IMAGE_HEIGHT']
+    config['RESOLUTION'] = args.resolution
     config['BAYER_PATTERN'] = args.bayer
+    
+    # 处理分辨率设置
+    if args.width and args.height:
+        # 如果指定了具体的宽高，覆盖分辨率预设
+        config['IMAGE_WIDTH'] = args.width
+        config['IMAGE_HEIGHT'] = args.height
+        print(f"使用指定尺寸: {args.width}x{args.height}")
+    else:
+        # 使用分辨率预设
+        config['IMAGE_WIDTH'] = None
+        config['IMAGE_HEIGHT'] = None
     config['CCM_MATRIX_PATH'] = args.ccm if args.ccm else DEFAULT_CONFIG['CCM_MATRIX_PATH']
     config['WB_PARAMS_PATH'] = args.wb if args.wb else DEFAULT_CONFIG['WB_PARAMS_PATH']
     config['LENS_SHADING_PARAMS_DIR'] = args.lens_shading if args.lens_shading else DEFAULT_CONFIG['LENS_SHADING_PARAMS_DIR']
@@ -911,6 +1065,10 @@ def main():
     config['DISPLAY_RAW_GRAYSCALE'] = not args.no_display
     config['SAVE_RAW_GRAYSCALE'] = not args.no_save_grayscale
     config['CREATE_COMPARISON_PLOT'] = not args.no_comparison
+    
+    # 尺寸检查选项
+    config['CHECK_DIMENSIONS'] = not args.no_check_dimensions
+    config['SKIP_ON_DIMENSION_MISMATCH'] = not args.force_correction
     
     # 执行逆ISP处理
     result = invert_isp_pipeline(config['INPUT_IMAGE_PATH'], config)

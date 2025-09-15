@@ -42,9 +42,16 @@ DARK_RAW_PATH = r"F:\ZJU\Picture\dark\g3\average_dark.raw"  # 暗电流图像路
 LENS_SHADING_PARAMS_DIR = r"F:\ZJU\Picture\lens shading\new"  # 镜头阴影矫正参数目录
 
 # 图像参数配置
-IMAGE_WIDTH = 3840      # 图像宽度
-IMAGE_HEIGHT = 2160     # 图像高度
-DATA_TYPE = 'uint16'    # 数据类型
+RESOLUTION = '1k'       # 分辨率选择: '1k', '4k', 'auto'
+IMAGE_WIDTH = None      # 图像宽度（根据分辨率设置或自动检测）
+IMAGE_HEIGHT = None     # 图像高度（根据分辨率设置或自动检测）
+DATA_TYPE = 'uint16'    # 数据类型（固定为uint16）
+
+# 分辨率定义
+RESOLUTIONS = {
+    '1k': {'width': 1920, 'height': 1080, 'name': '1K (1920x1080)'},
+    '4k': {'width': 3840, 'height': 2160, 'name': '4K (3840x2160)'}
+}
 
 # 输出配置
 OUTPUT_DIRECTORY = Path(INPUT_PATH).parent # 输出目录（None为自动生成）
@@ -58,6 +65,10 @@ WHITE_BALANCE_ENABLED = True      # 是否启用白平衡矫正
 CCM_ENABLED = True                # 是否启用CCM矫正
 GAMMA_CORRECTION_ENABLED = True   # 是否启用伽马变换
 DEMOSAIC_OUTPUT = True             # 是否输出去马赛克后的彩色图像
+
+# 尺寸检查选项
+CHECK_DIMENSIONS = True            # 是否检查尺寸匹配
+SKIP_ON_DIMENSION_MISMATCH = True  # 尺寸不匹配时是否跳过该步骤
 
 # CCM矫正参数
 CCM_MATRIX_PATH = r" F:\ZJU\Picture\ccm\ccm_2\ccm_output_20250905_162714"  # CCM矩阵文件路径
@@ -76,6 +87,69 @@ GAMMA_VALUE = 2.2                  # 伽马值（2.2为sRGB标准）
 # ============================================================================
 # 函数定义
 # ============================================================================
+
+def set_resolution_config(resolution: str) -> None:
+    """
+    根据分辨率设置全局配置参数
+    
+    Args:
+        resolution: 分辨率选择 ('1k', '4k', 'auto')
+    """
+    global IMAGE_WIDTH, IMAGE_HEIGHT
+    
+    if resolution in RESOLUTIONS:
+        res_info = RESOLUTIONS[resolution]
+        IMAGE_WIDTH = res_info['width']
+        IMAGE_HEIGHT = res_info['height']
+        print(f"设置分辨率: {res_info['name']}")
+    elif resolution == 'auto':
+        print("使用自动检测分辨率")
+        IMAGE_WIDTH = None
+        IMAGE_HEIGHT = None
+    else:
+        print(f"未知分辨率: {resolution}，使用自动检测")
+        IMAGE_WIDTH = None
+        IMAGE_HEIGHT = None
+
+def check_dimension_compatibility(data: np.ndarray, target_width: int, target_height: int, 
+                                 data_name: str = "data") -> bool:
+    """
+    检查数据尺寸是否与目标尺寸兼容
+    
+    Args:
+        data: 要检查的数据数组
+        target_width: 目标宽度
+        target_height: 目标高度
+        data_name: 数据名称（用于日志）
+        
+    Returns:
+        True if compatible, False otherwise
+    """
+    if data is None:
+        return False
+    
+    # 如果配置中禁用了尺寸检查，直接返回True
+    if not CHECK_DIMENSIONS:
+        print(f"  ⚠️  Dimension check disabled for {data_name}")
+        return True
+    
+    data_height, data_width = data.shape[:2]
+    
+    if data_width == target_width and data_height == target_height:
+        print(f"  ✅ {data_name} dimensions match: {data_width}x{data_height}")
+        return True
+    else:
+        print(f"  ⚠️  {data_name} dimensions mismatch:")
+        print(f"      Expected: {target_width}x{target_height}")
+        print(f"      Actual: {data_width}x{data_height}")
+        
+        # 根据配置决定是否跳过
+        if SKIP_ON_DIMENSION_MISMATCH:
+            print(f"      Skipping {data_name} correction...")
+            return False
+        else:
+            print(f"      Proceeding with {data_name} correction despite mismatch...")
+            return True
 
 def load_dark_reference(dark_path: str, width: int, height: int, data_type: str) -> Optional[np.ndarray]:
     """Load dark reference image"""
@@ -397,8 +471,13 @@ def process_single_image(raw_file: str, dark_data: np.ndarray, lens_shading_para
         # 2. Dark current subtraction
         if dark_subtraction_enabled and dark_data is not None:
             print(f"  2. Applying dark current subtraction...")
-            dark_corrected = subtract_dark_current(raw_data, dark_data, clip_negative=True)
-            print(f"  2. Dark current subtraction applied")
+            # 检查暗电流数据尺寸是否匹配
+            if check_dimension_compatibility(dark_data, width, height, "dark reference"):
+                dark_corrected = subtract_dark_current(raw_data, dark_data, clip_negative=True)
+                print(f"  2. Dark current subtraction applied")
+            else:
+                dark_corrected = raw_data.copy()
+                print(f"  2. Dark current subtraction skipped due to dimension mismatch")
         else:
             dark_corrected = raw_data.copy()
             print(f"  2. Dark current subtraction skipped")
@@ -406,8 +485,18 @@ def process_single_image(raw_file: str, dark_data: np.ndarray, lens_shading_para
         # 3. Lens shading correction
         if lens_shading_enabled and lens_shading_params:
             print(f"  3. Applying lens shading correction...")
-            lens_corrected = apply_lens_shading_correction(dark_corrected, lens_shading_params)
-            print(f"  3. Lens shading correction applied")
+            # 检查镜头阴影参数是否与图像尺寸匹配
+            if 'correction_map' in lens_shading_params:
+                correction_map = lens_shading_params['correction_map']
+                if check_dimension_compatibility(correction_map, width, height, "lens shading correction map"):
+                    lens_corrected = apply_lens_shading_correction(dark_corrected, lens_shading_params)
+                    print(f"  3. Lens shading correction applied")
+                else:
+                    lens_corrected = dark_corrected.copy()
+                    print(f"  3. Lens shading correction skipped due to dimension mismatch")
+            else:
+                print(f"  3. No correction map found in lens shading parameters, skipping...")
+                lens_corrected = dark_corrected.copy()
         else:
             lens_corrected = dark_corrected.copy()
             print(f"  3. Lens shading correction skipped")
@@ -608,10 +697,17 @@ def main():
     print("=" * 60)
     print("ISP (Image Signal Processing) Pipeline")
     print("=" * 60)
+    
+    # 设置分辨率
+    set_resolution_config(RESOLUTION)
+    
     print(f"Input path: {INPUT_PATH}")
     print(f"Dark reference: {DARK_RAW_PATH}")
     print(f"Lens shading params: {LENS_SHADING_PARAMS_DIR}")
-    print(f"Image size: {IMAGE_WIDTH}x{IMAGE_HEIGHT}")
+    if IMAGE_WIDTH and IMAGE_HEIGHT:
+        print(f"Image size: {IMAGE_WIDTH}x{IMAGE_HEIGHT}")
+    else:
+        print("Image size: Auto-detected from RAW file")
     print(f"Data type: {DATA_TYPE}")
     print("=" * 60)
     
@@ -707,7 +803,7 @@ def main():
             if SAVE_IMAGES:
                 # Save 8-bit color image
                 if result['color_img'] is not None:
-                    output_file = output_dir / f"{raw_file.stem}_processed.jpg"
+                    output_file = output_dir / f"{raw_file.stem}_processed.png"
                     cv2.imwrite(str(output_file), result['color_img'])
                     print(f"8-bit color image saved: {output_file}")
                 
@@ -740,4 +836,47 @@ def main():
     print(f"{'='*60}")
 
 if __name__ == "__main__":
+    import argparse
+    
+    # 创建命令行参数解析器
+    parser = argparse.ArgumentParser(description='ISP (Image Signal Processing) Pipeline')
+    parser.add_argument('--input', '-i', help='Input RAW file or directory path')
+    parser.add_argument('--resolution', '-r', choices=['1k', '4k', 'auto'], 
+                       default=RESOLUTION, help='Resolution preset: 1k (1920x1080), 4k (3840x2160), or auto')
+    parser.add_argument('--width', '-W', type=int, help='Image width (overrides resolution preset)')
+    parser.add_argument('--height', '-H', type=int, help='Image height (overrides resolution preset)')
+    parser.add_argument('--dark', '-d', help='Dark reference RAW file path')
+    parser.add_argument('--lens-shading', '-l', help='Lens shading parameters directory path')
+    parser.add_argument('--output', '-o', help='Output directory path')
+    
+    # 尺寸检查参数
+    parser.add_argument('--no-check-dimensions', action='store_true', help='Disable dimension compatibility checking')
+    parser.add_argument('--force-correction', action='store_true', help='Force correction even if dimensions mismatch')
+    
+    args = parser.parse_args()
+    
+    # 更新全局配置
+    if args.input:
+        INPUT_PATH = args.input
+    if args.resolution:
+        RESOLUTION = args.resolution
+    if args.width and args.height:
+        IMAGE_WIDTH = args.width
+        IMAGE_HEIGHT = args.height
+        print(f"使用指定尺寸: {args.width}x{args.height}")
+    if args.dark:
+        DARK_RAW_PATH = args.dark
+    if args.lens_shading:
+        LENS_SHADING_PARAMS_DIR = args.lens_shading
+    if args.output:
+        OUTPUT_DIRECTORY = args.output
+    
+    # 更新尺寸检查选项
+    if args.no_check_dimensions:
+        CHECK_DIMENSIONS = False
+        print("尺寸检查已禁用")
+    if args.force_correction:
+        SKIP_ON_DIMENSION_MISMATCH = False
+        print("强制进行校正，即使尺寸不匹配")
+    
     main()

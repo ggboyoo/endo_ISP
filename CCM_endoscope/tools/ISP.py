@@ -426,47 +426,29 @@ def apply_ccm_16bit(color_image: np.ndarray, ccm_matrix: np.ndarray, matrix_type
         print(f"  Error applying CCM correction: {e}")
         return color_image
 
-def process_single_image(raw_file: str, dark_data: np.ndarray, lens_shading_params: Dict, 
-                        width: int, height: int, data_type: str, wb_params: Optional[Dict] = None,
-                        dark_subtraction_enabled: bool = True, lens_shading_enabled: bool = True,
-                        white_balance_enabled: bool = True, ccm_enabled: bool = True,
-                        ccm_matrix_path: Optional[str] = None, ccm_matrix: Optional[np.ndarray] = None,
-                        gamma_correction_enabled: bool = True, gamma_value: float = 2.2, 
-                        demosaic_output: bool = True) -> Dict:
+def process_raw_array(raw_data: np.ndarray, dark_data: np.ndarray, lens_shading_params: Dict,
+                      width: int, height: int, data_type: str, wb_params: Optional[Dict] = None,
+                      dark_subtraction_enabled: bool = True, lens_shading_enabled: bool = True,
+                      white_balance_enabled: bool = True, ccm_enabled: bool = True,
+                      ccm_matrix_path: Optional[str] = None, ccm_matrix: Optional[np.ndarray] = None,
+                      gamma_correction_enabled: bool = True, gamma_value: float = 2.2,
+                      demosaic_output: bool = True) -> Dict:
     """
-    Process a single RAW image through the complete ISP pipeline
-    
-    Args:
-        raw_file: Path to RAW file
-        dark_data: Dark reference data
-        lens_shading_params: Lens shading correction parameters
-        width: Image width
-        height: Image height
-        data_type: Data type ('uint8' or 'uint16')
-        wb_params: White balance parameters (optional)
-        dark_subtraction_enabled: Enable dark current subtraction
-        lens_shading_enabled: Enable lens shading correction
-        white_balance_enabled: Enable white balance correction
-        ccm_enabled: Enable CCM correction
-        ccm_matrix_path: Path to CCM matrix file (optional if ccm_matrix provided)
-        ccm_matrix: CCM matrix as numpy array (optional, takes priority over ccm_matrix_path)
-        gamma_correction_enabled: Enable gamma correction
-        gamma_value: Gamma value for correction (default 2.2)
-        demosaic_output: Enable demosaicing output
-        
-    Returns:
-        Dictionary containing processing results
+    Process a RAW ndarray through the complete ISP pipeline.
+
+    Args mirror process_single_image, except raw_data is provided directly.
     """
     try:
-        print(f"Processing: {os.path.basename(raw_file)}")
-        
-        # 1. Load RAW image
-        print(f"  1. Loading RAW image...")
-        raw_data = read_raw_image(raw_file, width, height, data_type)
+        print(f"Processing ndarray RAW input...")
         if raw_data is None:
-            return {'processing_success': False, 'error': 'Failed to load RAW image'}
-        
-        print(f"  1. RAW loaded: {raw_data.shape}, range: {np.min(raw_data)}-{np.max(raw_data)}")
+            return {'processing_success': False, 'error': 'raw_data is None'}
+        if raw_data.shape != (height, width):
+            print(f"  Warning: raw_data shape {raw_data.shape} != ({height}, {width}), attempting reshape if sizes match")
+            if raw_data.size == width * height:
+                raw_data = raw_data.reshape((height, width))
+            else:
+                return {'processing_success': False, 'error': f'size mismatch: {raw_data.size} vs {width*height}'}
+        print(f"  RAW received: {raw_data.shape}, range: {np.min(raw_data)}-{np.max(raw_data)}")
         
         # 2. Dark current subtraction
         if dark_subtraction_enabled and dark_data is not None:
@@ -598,6 +580,50 @@ def process_single_image(raw_file: str, dark_data: np.ndarray, lens_shading_para
             'gamma_corrected_8bit': gamma_corrected_8bit
         }
         
+    except Exception as e:
+        print(f"Error processing array: {e}")
+        return {
+            'processing_success': False,
+            'error': str(e)
+        }
+
+
+def process_single_image(raw_file: str, dark_data: np.ndarray, lens_shading_params: Dict, 
+                        width: int, height: int, data_type: str, wb_params: Optional[Dict] = None,
+                        dark_subtraction_enabled: bool = True, lens_shading_enabled: bool = True,
+                        white_balance_enabled: bool = True, ccm_enabled: bool = True,
+                        ccm_matrix_path: Optional[str] = None, ccm_matrix: Optional[np.ndarray] = None,
+                        gamma_correction_enabled: bool = True, gamma_value: float = 2.2, 
+                        demosaic_output: bool = True) -> Dict:
+    """
+    Wrapper that reads RAW from disk then delegates to process_raw_array.
+    """
+    try:
+        print(f"Processing: {os.path.basename(raw_file)}")
+        print(f"  1. Loading RAW image...")
+        raw_data = read_raw_image(raw_file, width, height, data_type)
+        if raw_data is None:
+            return {'processing_success': False, 'error': 'Failed to load RAW image'}
+        print(f"  1. RAW loaded: {raw_data.shape}, range: {np.min(raw_data)}-{np.max(raw_data)}")
+
+        return process_raw_array(
+            raw_data=raw_data,
+            dark_data=dark_data,
+            lens_shading_params=lens_shading_params,
+            width=width,
+            height=height,
+            data_type=data_type,
+            wb_params=wb_params,
+            dark_subtraction_enabled=dark_subtraction_enabled,
+            lens_shading_enabled=lens_shading_enabled,
+            white_balance_enabled=white_balance_enabled,
+            ccm_enabled=ccm_enabled,
+            ccm_matrix_path=ccm_matrix_path,
+            ccm_matrix=ccm_matrix,
+            gamma_correction_enabled=gamma_correction_enabled,
+            gamma_value=gamma_value,
+            demosaic_output=demosaic_output,
+        )
     except Exception as e:
         print(f"Error processing image: {e}")
         return {

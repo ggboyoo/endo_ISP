@@ -24,8 +24,8 @@ except ImportError:
 # 配置参数 - 直接在这里修改，无需命令行输入
 CONFIG = {
     # 输入输出路径
-    'INPUT_DIR': r"F:\ZJU\Picture\ccm\ccm_2",  # 输入目录包含RAW文件
-    'OUTPUT_DIR': r"F:\ZJU\Picture\ccm\ccm_2\processed",  # 输出目录用于处理后的JPG文件
+    'INPUT_DIR': r"F:\ZJU\Picture\denoise\g2",  # 输入目录包含RAW文件
+    'OUTPUT_DIR': r"F:\ZJU\Picture\g2\processed",  # 输出目录用于处理后的JPG文件
     'DARK_FILE': r"F:\ZJU\Picture\dark\g6\average_dark.raw",  # 暗电流参考文件路径
     'LENS_SHADING_DIR': r"F:\ZJU\Picture\lens shading\new",  # 镜头阴影矫正参数目录
     'WB_PARAMS_PATH': r"F:\ZJU\Picture\wb\wb_output",  # 白平衡参数文件或目录

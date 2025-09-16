@@ -1,4 +1,5 @@
 import os
+from re import T
 from typing import Optional, Tuple
 
 import numpy as np
@@ -22,8 +23,9 @@ except Exception:  # pragma: no cover
 # =========================
 # Required
 INPUT_PATH: str = r"F:\ZJU\Picture\invert_isp\inverted_output.raw"  # e.g. r"E:\\path\\to\\input.raw" or .npy/.png
-OUTPUT_PATH: str = r"F:\ZJU\Picture\noise_add\3.png"  # e.g. r"E:\\path\\to\\output.png"
-GAIN: float = 3.0  # must be > 0
+GAIN: float = 0.8  # must be > 0
+OUTPUT_PATH: str = rf"F:\ZJU\Picture\noise_add\{GAIN}test.png"  # e.g. r"E:\\path\\to\\output.png"
+
 
 # Optional
 SEED: Optional[int] = None  # e.g. 123 or None

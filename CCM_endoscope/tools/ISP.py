@@ -15,6 +15,12 @@ from typing import Optional, Tuple, List, Dict
 import json
 from datetime import datetime
 
+# Optional demosaicing library (colour-demosaicing)
+try:
+    from colour_demosaicing import demosaicing_CFA_Bayer_Malvar2004 as _colour_demosaic
+except Exception:
+    _colour_demosaic = None
+
 # Import functions from raw_reader.py
 try:
     from raw_reader import read_raw_image, demosaic_image_corrected_fixed
@@ -267,44 +273,55 @@ def demosaic_16bit(raw_data: np.ndarray, bayer_pattern: str = 'rggb') -> np.ndar
     Returns:
         16-bit color image (BGR format)
     """
-    print("Demosaicing 16-bit RAW data with fixed demosaicing...")
-    
+    print("Demosaicing 16-bit RAW data (prefer colour_demosaicing Malvar2004)...")
+
+    # Try colour_demosaicing first
     try:
-        # For RGGB pattern, apply the fixed demosaicing logic directly on 16-bit data
-        if bayer_pattern == 'rggb':
-            print("Processing RGGB pattern with channel correction on 16-bit data...")
-            
-            # Convert to uint16 for OpenCV demosaicing
-            raw_data_uint16 = raw_data.astype(np.uint16)
-            print(f"  Converted to uint16: {raw_data_uint16.shape}, dtype: {raw_data_uint16.dtype}")
-            
-            # Direct demosaicing on 16-bit data
+        if _colour_demosaic is not None:
+            pattern_map = {
+                'rggb': 'RGGB',
+                'bggr': 'BGGR',
+                'grbg': 'GRBG',
+                'gbrg': 'GBRG',
+            }
+            pat = pattern_map.get(bayer_pattern.lower())
+            if pat is None:
+                raise ValueError(f"Unsupported Bayer pattern: {bayer_pattern}")
+
+            raw_clip = np.clip(raw_data.astype(np.float64), 0.0, 4095.0)
+            raw_norm = raw_clip / 4095.0
+            rgb_float = _colour_demosaic(raw_norm, pattern=pat)
+            # Convert RGB float [0,1] back to 16-bit (12-bit content)
+            rgb_16 = np.clip(np.round(rgb_float * 4095.0), 0, 4095).astype(np.uint16)
+            # Convert to BGR channel order for consistency with OpenCV usage downstream
+            bgr_16 = rgb_16[:, :, [2, 1, 0]]
+            print(f"  Demosaicing (colour) completed: {bgr_16.shape}, range: {np.min(bgr_16)}-{np.max(bgr_16)}")
+            return bgr_16
+    except Exception as e:
+        print(f"  colour_demosaicing failed, will fallback to OpenCV: {e}")
+
+    # Fallback to OpenCV bilinear if colour_demosaicing is unavailable or failed
+    try:
+        bp = bayer_pattern.lower()
+        raw_data_uint16 = raw_data.astype(np.uint16)
+        if bp == 'rggb':
             demosaiced = cv2.cvtColor(raw_data_uint16, cv2.COLOR_BayerRG2BGR)
-            
-            # Apply the R/B channel swap correction (same as demosaic_image_corrected_fixed)
             corrected = demosaiced.copy()
-            corrected[:, :, 0] = demosaiced[:, :, 2]  # B = R
-            corrected[:, :, 2] = demosaiced[:, :, 0]  # R = B
-            
+            corrected[:, :, 0] = demosaiced[:, :, 2]
+            corrected[:, :, 2] = demosaiced[:, :, 0]
             color_16bit = corrected
-            
-        elif bayer_pattern == 'bggr':
-            raw_data_uint16 = raw_data.astype(np.uint16)
+        elif bp == 'bggr':
             color_16bit = cv2.cvtColor(raw_data_uint16, cv2.COLOR_BayerBG2BGR)
-        elif bayer_pattern == 'grbg':
-            raw_data_uint16 = raw_data.astype(np.uint16)
+        elif bp == 'grbg':
             color_16bit = cv2.cvtColor(raw_data_uint16, cv2.COLOR_BayerGR2BGR)
-        elif bayer_pattern == 'gbrg':
-            raw_data_uint16 = raw_data.astype(np.uint16)
+        elif bp == 'gbrg':
             color_16bit = cv2.cvtColor(raw_data_uint16, cv2.COLOR_BayerGB2BGR)
         else:
             raise ValueError(f"Unsupported Bayer pattern: {bayer_pattern}")
-        
-        print(f"  Demosaicing completed: {color_16bit.shape}, range: {np.min(color_16bit)}-{np.max(color_16bit)}")
+        print(f"  Demosaicing (OpenCV) completed: {color_16bit.shape}, range: {np.min(color_16bit)}-{np.max(color_16bit)}")
         return color_16bit
-        
     except Exception as e:
-        print(f"  Error in demosaicing: {e}")
+        print(f"  Error in fallback demosaicing: {e}")
         return None
 
 def apply_white_balance_correction_16bit(color_image: np.ndarray, wb_params: Dict) -> np.ndarray:

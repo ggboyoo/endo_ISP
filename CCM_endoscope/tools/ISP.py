@@ -43,12 +43,12 @@ except ImportError:
 # ============================================================================
 
 # 输入路径配置
-INPUT_PATH = r"F:\ZJU\Picture\invert_isp\inverted_output.raw"# 待处理的RAW图像路径
+INPUT_PATH = r"F:\ZJU\Picture\dark\g3\1.raw"# 待处理的RAW图像路径
 DARK_RAW_PATH = r"F:\ZJU\Picture\dark\g3\average_dark.raw"  # 暗电流图像路径
 LENS_SHADING_PARAMS_DIR = r"F:\ZJU\Picture\lens shading\new"  # 镜头阴影矫正参数目录
 
 # 图像参数配置
-RESOLUTION = '1k'       # 分辨率选择: '1k', '4k', 'auto'
+RESOLUTION = '4k'       # 分辨率选择: '1k', '4k', 'auto'
 IMAGE_WIDTH = None      # 图像宽度（根据分辨率设置或自动检测）
 IMAGE_HEIGHT = None     # 图像高度（根据分辨率设置或自动检测）
 DATA_TYPE = 'uint16'    # 数据类型（固定为uint16）

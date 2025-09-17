@@ -23,8 +23,9 @@ except Exception:  # pragma: no cover
 # =========================
 # Required
 INPUT_PATH: str = r"F:\ZJU\Picture\invert_isp\inverted_output.raw"  # e.g. r"E:\\path\\to\\input.raw" or .npy/.png
-GAIN: float = 0.8  # must be > 0
-OUTPUT_PATH: str = rf"F:\ZJU\Picture\noise_add\{GAIN}test.png"  # e.g. r"E:\\path\\to\\output.png"
+g:int = 1
+GAIN: float = 0.3754*g+0.7559  # must be > 0
+OUTPUT_PATH: str = rf"F:\ZJU\Picture\noise_add\g{g}dark_shading_hot.png"  # e.g. r"E:\\path\\to\\output.png"
 
 
 # Optional
@@ -55,6 +56,18 @@ USE_WHITE_BALANCE: bool = True  # enable and set WB_PARAMS_PATH to load from ISP
 WB_PARAMS_PATH: Optional[str] = r"F:\ZJU\Picture\wb\wb_output"  # file or directory containing wb json
 USE_CCM: bool = True  # enable and set CCM_MATRIX_PATH to load from ISP
 CCM_MATRIX_PATH: Optional[str] = r"F:\ZJU\Picture\ccm\ccm_2\ccm_output_20250905_162714"  # file or directory containing ccm json
+
+# Additive dark noise (optional)
+ADDITIVE_NOISE_ENABLED: bool = True
+ADDITIVE_DARK_DIR: Optional[str] = f"F:\ZJU\Picture\dark\g{g}"  # directory containing dark raw frames
+ADDITIVE_DARK_WIDTH: int = 3840
+ADDITIVE_DARK_HEIGHT: int = 2160
+ADDITIVE_SCALE: float = 1.0  # scale factor for additive dark
+ADDITIVE_ZERO_MEAN: bool = False  # subtract mean of the selected patch before adding
+
+# Subtract dark average (dark level and fixed pattern removal)
+SUBTRACT_DARK_AVERAGE_ENABLED: bool = True
+DARK_AVERAGE_FILENAME: Optional[str] = None  # if None, try 'dark_average.raw' then 'average.raw'
 
 
 def load_input_array(
@@ -167,6 +180,265 @@ def save_array(arr: np.ndarray, out_path: str, dtype: Optional[str] = None) -> N
     imageio.imwrite(out_path, arr_to_save)
 
 
+def _list_raw_files(directory: str) -> list:
+    try:
+        from pathlib import Path
+        p = Path(directory)
+        return sorted([f for f in p.glob('*.raw') if f.is_file()])
+    except Exception:
+        return []
+
+
+def _select_random_even(value_max: int, rng: np.random.Generator) -> int:
+    if value_max <= 0:
+        return 0
+    # pick an even start in [0, value_max]
+    max_even = value_max - (value_max % 2)
+    # number of even positions
+    num = max_even // 2 + 1
+    k = int(rng.integers(0, num))
+    return int(2 * k)
+
+
+def _fix_hot_pixels_nearest(src: np.ndarray, threshold: float = 200.0) -> np.ndarray:
+    """
+    Detect hot pixels (> threshold) and replace each with the nearest non-hot neighbor value.
+
+    Uses a small expanding neighborhood search with Manhattan distance priority.
+    """
+    img = src.copy()
+    if img.ndim != 2:
+        return img
+    h, w = img.shape
+    hot_mask = img.astype(np.float32) > float(threshold)
+    if not np.any(hot_mask):
+        return img
+
+    hot_coords = np.argwhere(hot_mask)
+
+    # Search offsets ordered by distance
+    offsets = [
+        (0, 1), (0, -1), (1, 0), (-1, 0),
+        (1, 1), (1, -1), (-1, 1), (-1, -1),
+        (0, 2), (0, -2), (2, 0), (-2, 0),
+        (2, 1), (2, -1), (-2, 1), (-2, -1), (1, 2), (-1, 2), (1, -2), (-1, -2),
+    ]
+
+    src_f = src.astype(np.float32)
+    thr = float(threshold)
+    for y, x in hot_coords:
+        replaced = False
+        for dy, dx in offsets:
+            ny = y + dy
+            nx = x + dx
+            if 0 <= ny < h and 0 <= nx < w:
+                val = src_f[ny, nx]
+                if val <= thr:
+                    img[y, x] = val.astype(img.dtype) if hasattr(val, 'astype') else val
+                    replaced = True
+                    break
+        if not replaced:
+            # Fallback to threshold cap
+            img[y, x] = src.dtype.type(threshold) if hasattr(src.dtype, 'type') else threshold
+    return img
+
+
+def _fix_hot_pixels_adaptive(src: np.ndarray, window_size: int = 5, k_std: float = 5.0, abs_min: float = 200.0) -> np.ndarray:
+    """
+    Adaptive hot-pixel detection: mark pixel as hot if
+        value > local_mean + k_std * local_std and value > abs_min.
+    Replace with nearest non-hot neighbor (same strategy as _fix_hot_pixels_nearest).
+    """
+    if src.ndim != 2:
+        return src
+    if window_size < 3 or window_size % 2 == 0:
+        window_size = 5
+
+    try:
+        from scipy.ndimage import uniform_filter
+        src_f = src.astype(np.float32)
+        mean = uniform_filter(src_f, size=window_size, mode='nearest')
+        sq_mean = uniform_filter(src_f * src_f, size=window_size, mode='nearest')
+        var = np.maximum(sq_mean - mean * mean, 0.0)
+        std = np.sqrt(var)
+        thresh = mean + float(k_std) * std
+        hot_mask = (src_f > thresh) & (src_f > float(abs_min))
+        if not np.any(hot_mask):
+            return src
+        # Use nearest replacement on only hot pixels
+        fixed = src.copy()
+        h, w = src.shape
+        offsets = [
+            (0, 1), (0, -1), (1, 0), (-1, 0),
+            (1, 1), (1, -1), (-1, 1), (-1, -1),
+            (0, 2), (0, -2), (2, 0), (-2, 0),
+            (2, 1), (2, -1), (-2, 1), (-2, -1), (1, 2), (-1, 2), (1, -2), (-1, -2),
+        ]
+        for y, x in np.argwhere(hot_mask):
+            replaced = False
+            for dy, dx in offsets:
+                ny = y + dy
+                nx = x + dx
+                if 0 <= ny < h and 0 <= nx < w:
+                    if not hot_mask[ny, nx]:
+                        fixed[y, x] = src[ny, nx]
+                        replaced = True
+                        break
+            if not replaced:
+                fixed[y, x] = src.dtype.type(abs_min) if hasattr(src.dtype, 'type') else abs_min
+        return fixed
+    except Exception:
+        # Fallback to fixed threshold method
+        return _fix_hot_pixels_nearest(src, threshold=abs_min)
+
+
+def add_additive_dark_noise(
+    noisy: np.ndarray,
+    bayer_pattern: str,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """
+    Add an additive dark frame patch aligned to the Bayer mosaic.
+
+    - Loads a random .raw from ADDITIVE_DARK_DIR with size ADDITIVE_DARK_WIDTH x ADDITIVE_DARK_HEIGHT
+    - If sizes differ, crops a patch matching `noisy` shape
+    - Ensures patch starts at an R site for RGGB-like mosaics (even row, even col for 'rggb')
+    - Optionally zero-mean the patch, then scales and adds
+    """
+    if not ADDITIVE_NOISE_ENABLED or not ADDITIVE_DARK_DIR:
+        return noisy
+
+    if project_read_raw_image is None:
+        return noisy
+
+    files = _list_raw_files(ADDITIVE_DARK_DIR)
+    if not files:
+        return noisy
+
+    h, w = noisy.shape[:2]
+    # choose random dark file
+    idx = int(rng.integers(0, len(files)))
+    dark_path = str(files[idx])
+
+    try:
+        dark_full = project_read_raw_image(dark_path, col=int(ADDITIVE_DARK_WIDTH), row=int(ADDITIVE_DARK_HEIGHT), data_type='uint16')
+    except Exception:
+        return noisy
+
+    if dark_full is None:
+        return noisy
+
+    # Hot pixel fix on the selected dark frame (adaptive if available)
+    try:
+        dark_full = _fix_hot_pixels_adaptive(dark_full, window_size=5, k_std=5.0, abs_min=200.0)
+    except Exception:
+        dark_full = _fix_hot_pixels_nearest(dark_full, threshold=200.0)
+
+    dh, dw = dark_full.shape[:2]
+    if dh < h or dw < w:
+        # cannot crop larger than source; fallback: tile crop center
+        y0 = max(0, (dh - h) // 2)
+        x0 = max(0, (dw - w) // 2)
+        # enforce even alignment for R at top-left when 'rggb'
+        if bayer_pattern.lower() == 'rggb':
+            y0 -= (y0 % 2)
+            x0 -= (x0 % 2)
+        patch = dark_full[y0:y0 + h, x0:x0 + w]
+    elif dh == h and dw == w:
+        # same size
+        patch = dark_full
+    else:
+        # random crop with Bayer alignment
+        max_y = dh - h
+        max_x = dw - w
+        if bayer_pattern.lower() == 'rggb':
+            y0 = _select_random_even(max_y, rng)
+            x0 = _select_random_even(max_x, rng)
+        else:
+            # generic even alignment to preserve 2x2 blocks
+            y0 = _select_random_even(max_y, rng)
+            x0 = _select_random_even(max_x, rng)
+        patch = dark_full[y0:y0 + h, x0:x0 + w]
+
+    patch_f = patch.astype(np.float32)
+    if ADDITIVE_ZERO_MEAN:
+        patch_f = patch_f - float(np.mean(patch_f))
+    if ADDITIVE_SCALE != 1.0:
+        patch_f = patch_f * float(ADDITIVE_SCALE)
+
+    out = noisy.astype(np.float32) + patch_f
+    return out
+
+
+def subtract_dark_average(
+    image: np.ndarray,
+    bayer_pattern: str,
+) -> np.ndarray:
+    """
+    Subtract a Bayer-aligned dark average from the image to remove fixed pattern noise.
+
+    - Looks for DARK_AVERAGE_FILENAME in ADDITIVE_DARK_DIR. If None, tries
+      'dark_average.raw' then 'average.raw'.
+    - Aligns by cropping the dark average with the same Bayer-aligned rule as additive noise.
+    """
+    if not SUBTRACT_DARK_AVERAGE_ENABLED or not ADDITIVE_DARK_DIR:
+        return image
+
+    if project_read_raw_image is None:
+        return image
+
+    # Resolve path
+    from pathlib import Path
+    base = Path(ADDITIVE_DARK_DIR)
+    candidates = []
+    if DARK_AVERAGE_FILENAME:
+        candidates.append(base / DARK_AVERAGE_FILENAME)
+    candidates.append(base / 'average_dark.raw')
+    candidates.append(base / 'average.raw')
+
+    dark_avg_full = None
+    for p in candidates:
+        try:
+            if p.exists():
+                arr = project_read_raw_image(str(p), col=int(ADDITIVE_DARK_WIDTH), row=int(ADDITIVE_DARK_HEIGHT), data_type='uint16')
+                if arr is not None:
+                    # Hot pixel fix on average dark as well (adaptive)
+                    try:
+                        dark_avg_full = _fix_hot_pixels_adaptive(arr, window_size=5, k_std=5.0, abs_min=200.0)
+                    except Exception:
+                        dark_avg_full = _fix_hot_pixels_nearest(arr, threshold=200.0)
+                    break
+        except Exception:
+            continue
+
+    if dark_avg_full is None:
+        return image
+
+    h, w = image.shape[:2]
+    dh, dw = dark_avg_full.shape[:2]
+
+    # Bayer-aligned crop similar to additive path
+    if dh < h or dw < w:
+        y0 = max(0, (dh - h) // 2)
+        x0 = max(0, (dw - w) // 2)
+        if bayer_pattern.lower() == 'rggb':
+            y0 -= (y0 % 2)
+            x0 -= (x0 % 2)
+        dark_avg = dark_avg_full[y0:y0 + h, x0:x0 + w]
+    elif dh == h and dw == w:
+        dark_avg = dark_avg_full
+    else:
+        # align to even grid
+        max_y = dh - h
+        max_x = dw - w
+        y0 = max_y - (max_y % 2)
+        x0 = max_x - (max_x % 2)
+        dark_avg = dark_avg_full[y0:y0 + h, x0:x0 + w]
+
+    out = image.astype(np.float32) - dark_avg.astype(np.float32)
+    return out
+
+
 def main() -> None:
     input_path = INPUT_PATH
     output_path = OUTPUT_PATH
@@ -211,6 +483,25 @@ def main() -> None:
         clip_min=clip_min,
         clip_max=clip_max,
     )
+
+    # Additive dark noise after Poisson noise
+    if ADDITIVE_NOISE_ENABLED:
+        rng = np.random.default_rng(seed)
+        noisy = add_additive_dark_noise(
+            noisy=noisy,
+            bayer_pattern=ISP_BAYER_PATTERN,
+            rng=rng,
+        )
+
+
+    # Subtract dark average to remove fixed pattern and hot pixels
+    if SUBTRACT_DARK_AVERAGE_ENABLED:
+        noisy = subtract_dark_average(
+            image=noisy,
+            bayer_pattern=ISP_BAYER_PATTERN,
+        )
+        
+        noisy = np.clip(noisy, 0, 4095)
 
     # If requested, pass through ISP and save PNG
     if RUN_ISP and ext == '.raw':
@@ -278,7 +569,7 @@ def main() -> None:
             if project_demosaic_fixed is None:
                 raise RuntimeError('Cannot run simple ISP: demosaic function not available')
             # Ensure uint16 for demosaicing
-            noisy_u16 = np.clip(noisy, 0, 65535).astype(np.uint16)
+            noisy_u16 = np.clip(noisy, 0, 4095).astype(np.uint16)   
             color16 = project_demosaic_fixed(noisy_u16, ISP_BAYER_PATTERN)
             max_val = int(np.max(color16))
             if max_val > 0:

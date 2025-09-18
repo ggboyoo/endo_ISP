@@ -66,7 +66,6 @@ CONFIG = {
     'LUMINANCE_NORMALIZATION': True,  # 是否启用亮度归一化
     'WHITE_PRESERVATION_CONSTRAINT': True,  # 是否启用白色保持约束
     'PATCH_19_20_WHITE_BALANCE': False,  # 是否使用第19、20色块进行白平衡
-    'PATCH15_WEIGHT': 3,  # 第15块权重(>=1，1表示不加权)
     
     # 角度校正配置
     'ENABLE_ANGLE_CORRECTION': True,  # 是否启用透视变换校正
@@ -1445,32 +1444,99 @@ def process_colorcheck_image(input_image_path: str, config: Dict) -> Dict:
             print(f"  Median: {delta_e_before_median:.3f}")
             print(f"  Max: {delta_e_before_max:.3f}")
             
-            # 调用CCM求解函数
-            # 提升第15块(1-based)权重 -> 索引14
-            w15 = int(max(1, CONFIG.get('PATCH15_WEIGHT', 1)))
-            if w15 > 1 and measured_linear.shape[0] >= 15:
-                idx15 = 14
-                rep_m = np.repeat(measured_linear[idx15:idx15+1, :], w15-1, axis=0)
-                rep_r = np.repeat(reference_linear[idx15:idx15+1, :], w15-1, axis=0)
-                ml_fit = np.concatenate([measured_linear, rep_m], axis=0)
-                rl_fit = np.concatenate([reference_linear, rep_r], axis=0)
-            else:
-                ml_fit = measured_linear
-                rl_fit = reference_linear
+            # 迭代优化：每次移除误差最大的色块，直到均值<10或仅剩3块
+            print("Starting iterative CCM optimization with outlier removal...")
+            kept_indices = list(range(measured_linear.shape[0]))
+            removed_indices = []
+            iter_history = []
+            best_state = None  # 记录最佳(mean最小)状态
+            target_mean = 10.0
+            max_iters = max(1, len(kept_indices) - 3)
 
-            ccm_matrix = solve_ccm_gradient_optimization(ml_fit, rl_fit, ccm_config)
-            
-            # 计算CCM之后的DeltaE误差
-            print("Calculating DeltaE error after CCM correction...")
-            corrected_linear = np.clip(measured_linear @ ccm_matrix.T, 0.0, 1.0)
-            
-            # 转换到Lab空间计算DeltaE
+            def _apply_ccm(ml_arr: np.ndarray, ccm_arr: np.ndarray) -> np.ndarray:
+                if ccm_arr.shape == (3, 3):
+                    out = ml_arr @ ccm_arr.T
+                elif ccm_arr.shape == (3, 4):
+                    ones = np.ones((ml_arr.shape[0], 1), dtype=ml_arr.dtype)
+                    X = np.concatenate([ml_arr, ones], axis=1)
+                    out = X @ ccm_arr.T
+                elif ccm_arr.shape == (4, 3):
+                    ones = np.ones((ml_arr.shape[0], 1), dtype=ml_arr.dtype)
+                    X = np.concatenate([ml_arr, ones], axis=1)
+                    out = X @ ccm_arr
+                else:
+                    raise ValueError(f"Unsupported CCM shape: {ccm_arr.shape}")
+                return np.clip(out, 0.0, 1.0)
+
+            for it in range(max_iters):
+                try:
+                    ml = measured_linear[kept_indices]
+                    rl = reference_linear[kept_indices]
+
+                    if ml.size == 0 or rl.size == 0 or ml.shape[0] != rl.shape[0] or ml.shape[1] != 3 or rl.shape[1] != 3:
+                        raise ValueError(f"Invalid patch arrays: ml{ml.shape}, rl{rl.shape}")
+                    if not np.isfinite(ml).all() or not np.isfinite(rl).all():
+                        raise ValueError("NaN/Inf detected in input patches")
+
+                    # 拟合本轮CCM（提高第15块权重，索引14）
+                w15 = int(max(1, CONFIG.get('PATCH15_WEIGHT', 1))) if 'CONFIG' in globals() else 1
+                if w15 > 1 and len(kept_indices) >= 15 and 14 in kept_indices:
+                    local15 = kept_indices.index(14)
+                    rep_m = np.repeat(ml[local15:local15+1, :], w15-1, axis=0)
+                    rep_r = np.repeat(rl[local15:local15+1, :], w15-1, axis=0)
+                    ml_fit = np.concatenate([ml, rep_m], axis=0)
+                    rl_fit = np.concatenate([rl, rep_r], axis=0)
+                else:
+                    ml_fit = ml
+                    rl_fit = rl
+
+                    ccm_matrix_it = solve_ccm_gradient_optimization(ml_fit, rl_fit, ccm_config)
+
+                    # 应用并评估
+                    corrected_it = _apply_ccm(ml, ccm_matrix_it)
+                    corr_xyz = rgb_linear_to_xyz(corrected_it)
+                    corr_lab = xyz_to_lab(corr_xyz)
+                    ref_lab = xyz_to_lab(rgb_linear_to_xyz(rl))
+                    de_it = delta_e_cie76(corr_lab, ref_lab)
+                    mean_de_it = float(np.mean(de_it))
+
+                    iter_history.append({'iter': it, 'mean': mean_de_it, 'num_patches': len(kept_indices)})
+                    print(f"  Iter {it}: mean DeltaE = {mean_de_it:.3f}, patches = {len(kept_indices)}")
+
+                    # 记录最佳
+                    if best_state is None or mean_de_it < best_state['mean']:
+                        best_state = {
+                            'mean': mean_de_it,
+                            'ccm': ccm_matrix_it,
+                            'kept': kept_indices.copy(),
+                            'de': de_it.copy(),
+                            'corrected_linear': corrected_it.copy(),
+                        }
+
+                    # 满足阈值或无法再移除
+                    if mean_de_it <= target_mean or len(kept_indices) <= 3:
+                        break
+
+                    # 移除本轮误差最大的一个色块
+                    worst_local = int(np.argmax(de_it))
+                    worst_global = kept_indices[worst_local]
+                    removed_indices.append(worst_global)
+                    kept_indices.pop(worst_local)
+                except Exception as e:
+                    import traceback
+                    print(f"  Iter {it} failed: {e}")
+                    traceback.print_exc()
+                    break
+
+            # 使用最佳结果作为最终结果，避免退化
+            ccm_matrix = best_state['ccm']
+            corrected_linear = best_state['corrected_linear']
+            delta_e_after_mean = best_state['mean']
+            # 重新基于最佳纠正值计算完整统计
             corrected_xyz = rgb_linear_to_xyz(corrected_linear)
             corrected_lab = xyz_to_lab(corrected_xyz)
-            
-            # 计算CCM之后的DeltaE
-            delta_e_after = delta_e_cie76(corrected_lab, reference_lab)
-            delta_e_after_mean = float(np.mean(delta_e_after))
+            reference_lab_kept = xyz_to_lab(rgb_linear_to_xyz(reference_linear[best_state['kept']]))
+            delta_e_after = delta_e_cie76(corrected_lab, reference_lab_kept)
             delta_e_after_median = float(np.median(delta_e_after))
             delta_e_after_max = float(np.max(delta_e_after))
             
@@ -1712,7 +1778,7 @@ def save_ccm_images(isp_result: Dict, measured_patches: np.ndarray, reference_pa
             cv2.imwrite(str(ccm_8bit_path), ccm_8bit)
             print(f"CCM corrected 8-bit image saved: {ccm_8bit_path}")
             
-            # 额外保存进行gamma矫正后的8位图（sRGB显示更自然）
+            # 另存一份gamma矫正后的8位图
             try:
                 gamma = 2.2
                 ccm_8bit_float = np.clip(ccm_8bit.astype(np.float32) / 255.0, 0.0, 1.0)

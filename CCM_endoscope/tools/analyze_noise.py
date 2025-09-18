@@ -20,8 +20,8 @@ plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
 # 默认配置
-DEFAULT_EXCEL_PATH = r"F:\ZJU\Picture\denoise\g1/rggb_average_results.xlsx"
-DEFAULT_OUTPUT_DIR = r"F:\ZJU\Picture\denoise\g1/noise_analysis_output"
+DEFAULT_EXCEL_PATH = r"F:\ZJU\Picture\denoise\g6/rggb_average_results.xlsx"
+DEFAULT_OUTPUT_DIR = r"F:\ZJU\Picture\denoise\g6/noise_analysis_output"
 
 def detect_outliers_iqr(x, y, factor=1.5):
     """

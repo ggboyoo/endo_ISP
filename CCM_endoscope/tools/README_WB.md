@@ -195,7 +195,16 @@ dark_data = load_dark_reference(dark_path, width, height, data_type)
 lens_shading_params = load_correction_parameters(lens_shading_dir)
 
 # 使用ISP处理
-isp_result = process_single_image(raw_file, dark_data, lens_shading_params, width, height, data_type)
+isp_result = process_single_image(
+    raw_file=raw_file,
+    dark_data=dark_data,
+    lens_shading_params=lens_shading_params,
+    width=width,
+    height=height,
+    data_type=data_type,
+    wb_params=None,  # Will be loaded from path if needed
+    ccm_matrix=None  # Will use global CCM_MATRIX if available
+)
 ```
 
 ### 2. ROI选择机制

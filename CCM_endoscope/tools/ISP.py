@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
+            #!/usr/bin/env python3
 """
-ISP (Image Signal Processing) Script
-Reads RAW files and subtracts dark current images for image correction
+            ccm_matrix_path=None,  # No path needed when using global CCM_MATRIXand subtracts dark current images for image correction
 """
 
 import numpy as np
@@ -43,9 +42,9 @@ except ImportError:
 # ============================================================================
 
 # 输入路径配置
-INPUT_PATH = r"F:\ZJU\Picture\dark\g3\1.raw"# 待处理的RAW图像路径
+INPUT_PATH = r"F:\ZJU\Picture\ccm\ccm_1\25-09-05 101445.raw"# 待处理的RAW图像路径
 DARK_RAW_PATH = r"F:\ZJU\Picture\dark\g3\average_dark.raw"  # 暗电流图像路径
-LENS_SHADING_PARAMS_DIR = r"F:\ZJU\Picture\lens shading\new"  # 镜头阴影矫正参数目录
+LENS_SHADING_PARAMS_DIR = r"F:\ZJU\Picture\lens shading\regress"  # 镜头阴影矫正参数目录
 
 # 图像参数配置
 RESOLUTION = '4k'       # 分辨率选择: '1k', '4k', 'auto'
@@ -66,7 +65,7 @@ SAVE_IMAGES = True     # 是否保存处理后的图像
 
 # 处理选项
 DARK_SUBTRACTION_ENABLED = True    # 是否启用暗电流减法
-LENS_SHADING_ENABLED = True        # 是否启用镜头阴影矫正
+LENS_SHADING_ENABLED = True       # 是否启用镜头阴影矫正
 WHITE_BALANCE_ENABLED = True      # 是否启用白平衡矫正
 CCM_ENABLED = True                # 是否启用CCM矫正
 GAMMA_CORRECTION_ENABLED = True   # 是否启用伽马变换
@@ -77,12 +76,26 @@ CHECK_DIMENSIONS = True            # 是否检查尺寸匹配
 SKIP_ON_DIMENSION_MISMATCH = True  # 尺寸不匹配时是否跳过该步骤
 
 # CCM矫正参数
-CCM_MATRIX_PATH = r" F:\ZJU\Picture\ccm\ccm_2\ccm_output_20250905_162714"  # CCM矩阵文件路径
-CCM_MATRIX = [
-    [1.7801320111582375, -0.7844420268663381, 0.004310015708100662],
-    [-0.24377094860030846, 2.4432181685707977, -1.1994472199704893],
-    [-0.4715762768203783, -0.7105721829898775, 2.182148459810256]
-]  # CCM矩阵（如果提供则优先使用，不需要从文件加载）
+CCM_MATRIX_PATH = r"F:\ZJU\Picture\ccm\ccm_2\ccm_output_20250918_151644"  # CCM矩阵文件路径
+CCM_MATRIX = None
+# CCM_MATRIX = [
+#     [
+#       1.6023577244053917,
+#       -0.7021584601302941,
+#       0.09980073572490247
+#     ],
+#     [
+#       -0.18188330118239007,
+#       2.4686994973519805,
+#       -1.2868161961695905
+#     ],
+#     [
+#       -0.41185887887176487,
+#       -0.7704932869035739,
+#       2.1823521657753386
+#     ]
+# ]  # CCM矩阵（如果提供则优先使用，不需要从文件加载）
+ 
 
 # 白平衡参数
 WB_PARAMS_PATH = r"F:\ZJU\Picture\wb\wb_output"   # 白平衡参数文件路径   
@@ -157,6 +170,40 @@ def check_dimension_compatibility(data: np.ndarray, target_width: int, target_he
             print(f"      Proceeding with {data_name} correction despite mismatch...")
             return True
 
+def check_lens_shading_compatibility(raw_data: np.ndarray, lens_shading_params: Dict) -> bool:
+    """
+    检查镜头阴影参数是否与RAW图像尺寸兼容
+    
+    Args:
+        raw_data: RAW图像数据
+        lens_shading_params: 镜头阴影参数字典，包含R/G1/G2/B通道的小图
+    
+    Returns:
+        bool: 如果兼容返回True，否则返回False
+    """
+    if lens_shading_params is None:
+        print(f"  Warning: lens_shading_params is None")
+        return False
+    
+    h, w = raw_data.shape[:2]
+    expected_h, expected_w = h // 2, w // 2  # 期望的小图尺寸
+    
+    # 检查每个通道的尺寸
+    channels = ['R', 'G1', 'G2', 'B']
+    for channel in channels:
+        if channel in lens_shading_params:
+            channel_map = lens_shading_params[channel]
+            if channel_map is not None:
+                actual_h, actual_w = channel_map.shape[:2]
+                # 直接判断尺寸是否完全匹配，不允许误差
+                if actual_h != expected_h or actual_w != expected_w:
+                    print(f"  Warning: lens shading {channel} channel dimension mismatch!")
+                    print(f"    Expected: {expected_w}x{expected_h}")
+                    print(f"    Actual: {actual_w}x{actual_h}")
+                    return False
+    
+    return True
+
 def load_dark_reference(dark_path: str, width: int, height: int, data_type: str) -> Optional[np.ndarray]:
     """Load dark reference image"""
     try:
@@ -205,6 +252,79 @@ def apply_lens_shading_correction(raw_data: np.ndarray, lens_shading_params: Dic
         return corrected_data
     except Exception as e:
         print(f"Error applying lens shading correction: {e}")
+        return raw_data
+
+def lensshading_correction(raw_data: np.ndarray, correction_map: np.ndarray) -> np.ndarray:
+    """
+    Apply lens shading correction given a correction map array directly.
+
+    - raw_data: RAW image, expected 0..4095 scale
+    - correction_map: same HxW as raw_data; values multiply raw
+    Returns float64 image clipped to [0,4095].
+    """
+    try:
+        if correction_map is None:
+            return raw_data
+        if correction_map.shape[:2] != raw_data.shape[:2]:
+            print("  Warning: correction_map shape mismatch; skipping lens shading correction")
+            return raw_data
+        data = raw_data.astype(np.float64)
+        corrected = data * correction_map.astype(np.float64)
+        # 只裁剪负值，保持精度
+        corrected = np.clip(corrected, 0, None)
+        print(f"  Lens shading correction applied directly: range {np.min(corrected)}-{np.max(corrected)}")
+        return corrected
+    except Exception as e:
+        print(f"  Error in direct lens shading correction: {e}")
+        return raw_data
+
+def lensshading_correction_bayer(raw_data: np.ndarray, channel_maps: Dict[str, np.ndarray], bayer_pattern: str = 'rggb') -> np.ndarray:
+    """
+    Apply lens shading correction with per-CFA-channel correction maps on Bayer RAW.
+
+    channel_maps keys expected: 'R', 'G1', 'G2', 'B'. Each map is (H/2, W/2).
+    If sizes mismatch, maps will be resized to (H/2, W/2) with bilinear interpolation.
+    Returns float64 image clipped to [0,4095].
+    """
+    try:
+        h, w = raw_data.shape[:2]
+        hh, ww = h // 2, w // 2
+
+        def ensure_size(m: np.ndarray) -> np.ndarray:
+            if m is None:
+                return np.ones((hh, ww), dtype=np.float64)
+            if m.shape != (hh, ww):
+                # Resize to (ww, hh) as width-first for cv2
+                m_resized = cv2.resize(m.astype(np.float64), (ww, hh), interpolation=cv2.INTER_LINEAR)
+                return m_resized
+            return m.astype(np.float64)
+
+        Rm = ensure_size(channel_maps.get('R'))
+        G1m = ensure_size(channel_maps.get('G1'))
+        G2m = ensure_size(channel_maps.get('G2'))
+        Bm = ensure_size(channel_maps.get('B'))
+
+        data = raw_data.astype(np.float64)
+        pat = (bayer_pattern or 'rggb').lower()
+
+        if pat == 'rggb':
+            data[0::2, 0::2] *= Rm
+            data[0::2, 1::2] *= G1m
+            data[1::2, 0::2] *= G2m
+            data[1::2, 1::2] *= Bm
+        else:
+            # Fallback: treat as rggb indexing
+            data[0::2, 0::2] *= Rm
+            data[0::2, 1::2] *= G1m
+            data[1::2, 0::2] *= G2m
+            data[1::2, 1::2] *= Bm
+
+        # 只裁剪负值，保持精度
+        corrected = np.clip(data, 0, None)
+        print(f"  Lens shading correction (per-channel) applied: range {np.min(corrected)}-{np.max(corrected)}")
+        return corrected
+    except Exception as e:
+        print(f"  Error in per-channel lens shading correction: {e}")
         return raw_data
 
 def find_json_file(path: str, filename_pattern: str = None) -> Optional[str]:
@@ -342,8 +462,8 @@ def apply_white_balance_correction_16bit(color_image: np.ndarray, wb_params: Dic
         corrected[:, :, 1] *= g_gain  # Green channel
         corrected[:, :, 0] *= b_gain  # Blue channel
         
-        # Clip to valid range (12-bit data in 16-bit container)
-        corrected = np.clip(corrected, 0, 4095).astype(np.uint16)
+        # 只裁剪负值，保持精度
+        corrected = np.clip(corrected, 0, None)
         
         print(f"  White balance correction applied: {corrected.shape}, range: {np.min(corrected)}-{np.max(corrected)}")
         return corrected
@@ -351,6 +471,43 @@ def apply_white_balance_correction_16bit(color_image: np.ndarray, wb_params: Dic
     except Exception as e:
         print(f"  Error applying white balance correction: {e}")
         return color_image
+
+
+def apply_white_balance_bayer(raw_data: np.ndarray, wb_params: Dict, bayer_pattern: str = 'rggb') -> np.ndarray:
+    """
+    Apply white balance directly on Bayer mosaic (16-bit container with 12-bit range).
+
+    wb_params keys: 'r_gain', 'g_gain', 'b_gain'.
+    """
+    print("Applying white balance on Bayer mosaic...")
+    try:
+        r_gain = float(wb_params.get('r_gain', 1.0))
+        g_gain = float(wb_params.get('g_gain', 1.0))
+        b_gain = float(wb_params.get('b_gain', 1.0))
+
+        pat = (bayer_pattern or 'rggb').lower()
+        data = raw_data.astype(np.float64)
+
+        if pat == 'rggb':
+            # R at (0,0), G at (0,1) and (1,0), B at (1,1)
+            data[0::2, 0::2] *= r_gain
+            data[0::2, 1::2] *= g_gain
+            data[1::2, 0::2] *= g_gain
+            data[1::2, 1::2] *= b_gain
+        else:
+            # Fallback: treat as rggb
+            data[0::2, 0::2] *= r_gain
+            data[0::2, 1::2] *= g_gain
+            data[1::2, 0::2] *= g_gain
+            data[1::2, 1::2] *= b_gain
+
+        # 只裁剪负值，保持精度
+        data = np.clip(data, 0, None)
+        print("  White balance applied on Bayer domain")
+        return data
+    except Exception as e:
+        print(f"  Error applying Bayer white balance: {e}")
+        return raw_data
 
 def load_ccm_matrix(ccm_path: str) -> Optional[Tuple[np.ndarray, str]]:
     """Load CCM matrix from JSON file or directory"""
@@ -432,8 +589,8 @@ def apply_ccm_16bit(color_image: np.ndarray, ccm_matrix: np.ndarray, matrix_type
         else:
             raise ValueError(f"Unsupported matrix type: {matrix_type}")
         
-        # Clip to valid range (12-bit data in 16-bit container)
-        corrected = np.clip(corrected, 0, 4095).astype(np.uint16)
+        # 只裁剪负值，保持精度
+        corrected = np.clip(corrected, 0, None)
 
         corrected = corrected[:, :, [2, 1, 0]]
         print(f"  CCM correction applied: {corrected.shape}, range: {np.min(corrected)}-{np.max(corrected)}")
@@ -482,42 +639,47 @@ def process_raw_array(raw_data: np.ndarray, dark_data: np.ndarray, lens_shading_
             print(f"  2. Dark current subtraction skipped")
         
         # 3. Lens shading correction
-        if lens_shading_enabled and lens_shading_params:
-            print(f"  3. Applying lens shading correction...")
+        if lens_shading_enabled and lens_shading_params is not None:
+            print(f"  3. Applying lens shading correction (Bayer per-channel map)...")
             # 检查镜头阴影参数是否与图像尺寸匹配
-            if 'correction_map' in lens_shading_params:
-                correction_map = lens_shading_params['correction_map']
-                if check_dimension_compatibility(correction_map, width, height, "lens shading correction map"):
-                    lens_corrected = apply_lens_shading_correction(dark_corrected, lens_shading_params)
-                    print(f"  3. Lens shading correction applied")
-                else:
-                    lens_corrected = dark_corrected.copy()
-                    print(f"  3. Lens shading correction skipped due to dimension mismatch")
+            if check_lens_shading_compatibility(dark_corrected, lens_shading_params):
+                # lens_shading_params 为一个包含 R/G1/G2/B 小图的字典
+                lens_corrected = lensshading_correction_bayer(dark_corrected, lens_shading_params, 'rggb')
+                print(f"  3. Lens shading correction applied")
             else:
-                print(f"  3. No correction map found in lens shading parameters, skipping...")
                 lens_corrected = dark_corrected.copy()
+                print(f"  3. Lens shading correction skipped due to dimension mismatch")
         else:
             lens_corrected = dark_corrected.copy()
             print(f"  3. Lens shading correction skipped")
         
-        # 4. Demosaic in 16-bit domain
+        # 4. White balance on Bayer, then demosaic in 16-bit domain
         if demosaic_output:
+            # Apply WB on Bayer BEFORE demosaicing (if requested)
+            wb_applied_pre = False
+            raw_for_demosaic = lens_corrected
+            if white_balance_enabled and wb_params is not None:
+                print(f"  4. Applying white balance on Bayer before demosaicing...")
+                raw_for_demosaic = apply_white_balance_bayer(lens_corrected.astype(np.uint16), wb_params, 'rggb')
+                wb_applied_pre = True
             print(f"  4. Demosaicing in 16-bit domain...")
-            # color_img_16bit = demosaic_easy(lens_corrected,'rggb')
-            color_img_16bit = demosaic_16bit(lens_corrected, 'rggb')
+            color_img_16bit = demosaic_16bit(raw_for_demosaic, 'rggb')
             if color_img_16bit is not None:
                 print(f"  4. 16-bit color image: {color_img_16bit.shape}, range: {np.min(color_img_16bit)}-{np.max(color_img_16bit)}")
                 
                 # 保存去马赛克后的图像用于对比
                 demosaiced_8bit = (color_img_16bit.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
                 
-                # 5. White balance correction in 16-bit domain
-                if white_balance_enabled and wb_params is not None:
-                    print(f"  5. Applying white balance correction in 16-bit domain...")
-                    color_img_16bit = apply_white_balance_correction_16bit(color_img_16bit, wb_params)
-                    print(f"  5. White balance correction applied to 16-bit image")
+                # 5. Skip WB here if already applied on Bayer
+                if wb_applied_pre:
+                    print(f"  5. White balance already applied on Bayer, skipping post-demosaic WB")
                 else:
-                    print(f"  5. White balance correction skipped")
+                    if white_balance_enabled and wb_params is not None:
+                        print(f"  5. Applying white balance correction in 16-bit domain...")
+                        color_img_16bit = apply_white_balance_correction_16bit(color_img_16bit, wb_params)
+                        print(f"  5. White balance correction applied to 16-bit image")
+                    else:
+                        print(f"  5. White balance correction skipped")
                 
                 # 保存白平衡后的图像用于对比
                 wb_corrected_8bit = (color_img_16bit.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
@@ -544,6 +706,9 @@ def process_raw_array(raw_data: np.ndarray, dark_data: np.ndarray, lens_shading_
                         print(f"  6. No CCM matrix provided, skipping CCM correction...")
                 else:
                     print(f"  6. CCM correction skipped")
+                
+                # 在CCM矫正后进行clip，然后进行gamma矫正
+                color_img_16bit = np.clip(color_img_16bit, 0, 4095)
                 
                 # 保存CCM矫正后的图像用于对比
                 ccm_corrected_8bit = (color_img_16bit.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
@@ -605,23 +770,130 @@ def process_raw_array(raw_data: np.ndarray, dark_data: np.ndarray, lens_shading_
         }
 
 
-def process_single_image(raw_file: str, dark_data: np.ndarray, lens_shading_params: Dict, 
-                        width: int, height: int, data_type: str, wb_params: Optional[Dict] = None,
-                        dark_subtraction_enabled: bool = True, lens_shading_enabled: bool = True,
-                        white_balance_enabled: bool = True, ccm_enabled: bool = True,
-                        ccm_matrix_path: Optional[str] = None, ccm_matrix: Optional[np.ndarray] = None,
-                        gamma_correction_enabled: bool = True, gamma_value: float = 2.2, 
-                        demosaic_output: bool = True) -> Dict:
+def process_single_image(raw_file, dark_data=None, lens_shading_params=None, 
+                        width: int = None, height: int = None, data_type: str = None, 
+                        wb_params=None, dark_subtraction_enabled: bool = True, 
+                        lens_shading_enabled: bool = True, white_balance_enabled: bool = True, 
+                        ccm_enabled: bool = True, ccm_matrix_path: str = None, 
+                        ccm_matrix: np.ndarray = None, gamma_correction_enabled: bool = True, 
+                        gamma_value: float = 2.2, demosaic_output: bool = True) -> Dict:
     """
-    Wrapper that reads RAW from disk then delegates to process_raw_array.
+    Process single image with automatic parameter loading.
+    Parameters can be paths (strings) or values (arrays/objects).
+    If path, loads the parameter; if value, uses directly.
+    
+    Args:
+        raw_file: Path to RAW file (str) or RAW data array (np.ndarray)
+        dark_data: Path to dark reference (str) or dark data array (np.ndarray)
+        lens_shading_params: Path to lens shading params (str) or params dict
+        width: Image width (int)
+        height: Image height (int)
+        data_type: Data type (str)
+        wb_params: Path to WB params (str) or params dict
+        dark_subtraction_enabled: Enable dark subtraction (bool)
+        lens_shading_enabled: Enable lens shading correction (bool)
+        white_balance_enabled: Enable white balance (bool)
+        ccm_enabled: Enable CCM correction (bool)
+        ccm_matrix_path: Path to CCM matrix (str)
+        ccm_matrix: CCM matrix array (np.ndarray)
+        gamma_correction_enabled: Enable gamma correction (bool)
+        gamma_value: Gamma value (float)
+        demosaic_output: Enable demosaic output (bool)
     """
     try:
-        print(f"Processing: {os.path.basename(raw_file)}")
-        print(f"  1. Loading RAW image...")
-        raw_data = read_raw_image(raw_file, width, height, data_type)
-        if raw_data is None:
-            return {'processing_success': False, 'error': 'Failed to load RAW image'}
-        print(f"  1. RAW loaded: {raw_data.shape}, range: {np.min(raw_data)}-{np.max(raw_data)}")
+        # Determine if raw_file is a path or data array
+        if isinstance(raw_file, str):
+            print(f"Processing: {os.path.basename(raw_file)}")
+            raw_data = None  # Will be loaded from file
+        elif isinstance(raw_file, np.ndarray):
+            print(f"Processing: Provided RAW data array {raw_file.shape}")
+            raw_data = raw_file  # Use provided data directly
+        else:
+            return {'processing_success': False, 'error': 'raw_file must be a string path or numpy array'}
+        
+        # Load or use parameters
+        print(f"  Loading parameters...")
+        
+        # Image dimensions and data type
+        if width is None:
+            width = IMAGE_WIDTH
+        if height is None:
+            height = IMAGE_HEIGHT
+        if data_type is None:
+            data_type = DATA_TYPE
+            
+        # Load dark data if path provided
+        if isinstance(dark_data, str):
+            print(f"  Loading dark reference from: {dark_data}")
+            dark_data = load_dark_reference(dark_data, width, height, data_type)
+            if dark_data is None:
+                print("  Warning: Failed to load dark reference, continuing without dark subtraction")
+                dark_subtraction_enabled = False
+        elif dark_data is None and dark_subtraction_enabled:
+            print(f"  Loading dark reference from: {DARK_RAW_PATH}")
+            dark_data = load_dark_reference(DARK_RAW_PATH, width, height, data_type)
+            if dark_data is None:
+                print("  Warning: Failed to load dark reference, continuing without dark subtraction")
+                dark_subtraction_enabled = False
+        
+        # Load lens shading parameters if path provided
+        if isinstance(lens_shading_params, str):
+            print(f"  Loading lens shading parameters from: {lens_shading_params}")
+            lens_shading_params = load_correction_parameters(lens_shading_params)
+            if lens_shading_params is None:
+                print("  Warning: Failed to load lens shading parameters, continuing without lens shading correction")
+                lens_shading_enabled = False
+        elif lens_shading_params is None and lens_shading_enabled:
+            print(f"  Loading lens shading parameters from: {LENS_SHADING_PARAMS_DIR}")
+            lens_shading_params = load_correction_parameters(LENS_SHADING_PARAMS_DIR)
+            if lens_shading_params is None:
+                print("  Warning: Failed to load lens shading parameters, continuing without lens shading correction")
+                lens_shading_enabled = False
+        
+        # Load white balance parameters if path provided
+        if isinstance(wb_params, str):
+            print(f"  Loading white balance parameters from: {wb_params}")
+            wb_params = load_white_balance_parameters(wb_params)
+            if wb_params is None:
+                print("  Warning: Failed to load white balance parameters, continuing without white balance correction")
+                white_balance_enabled = False
+        elif wb_params is None and white_balance_enabled:
+            print(f"  Loading white balance parameters from: {WB_PARAMS_PATH}")
+            wb_params = load_white_balance_parameters(WB_PARAMS_PATH)
+            if wb_params is None:
+                print("  Warning: Failed to load white balance parameters, continuing without white balance correction")
+                white_balance_enabled = False
+        
+        # Load CCM matrix if path provided, or use provided matrix
+        if ccm_matrix is not None:
+            print(f"  Using provided CCM matrix: {ccm_matrix.shape}")
+        elif isinstance(ccm_matrix_path, str):
+            print(f"  Loading CCM matrix from: {ccm_matrix_path}")
+            ccm_result = load_ccm_matrix(ccm_matrix_path)
+            if ccm_result is not None:
+                ccm_matrix, _ = ccm_result
+                print(f"  CCM matrix loaded: {ccm_matrix.shape}")
+            else:
+                print("  Warning: Failed to load CCM matrix, continuing without CCM correction")
+                ccm_enabled = False
+        elif ccm_matrix_path is None and ccm_enabled and ccm_matrix is None:
+            # Check if global CCM_MATRIX has values
+            if CCM_MATRIX and len(CCM_MATRIX) > 0:
+                ccm_matrix = np.array(CCM_MATRIX)
+                print(f"  Using global CCM matrix: {ccm_matrix.shape}")
+            else:
+                print("  No CCM matrix available, skipping CCM correction")
+                ccm_enabled = False
+        
+        # Load RAW data if path provided, otherwise use provided data
+        if isinstance(raw_file, str):
+            print(f"  1. Loading RAW image from file...")
+            raw_data = read_raw_image(raw_file, width, height, data_type)
+            if raw_data is None:
+                return {'processing_success': False, 'error': 'Failed to load RAW image'}
+            print(f"  1. RAW loaded: {raw_data.shape}, range: {np.min(raw_data)}-{np.max(raw_data)}")
+        else:
+            print(f"  1. Using provided RAW data: {raw_data.shape}, range: {np.min(raw_data)}-{np.max(raw_data)}")
 
         return process_raw_array(
             raw_data=raw_data,
@@ -724,8 +996,19 @@ def create_comparison_plot(original: np.ndarray, dark_corrected: np.ndarray,
         axes[2, 1].set_title('8. Final Result', fontsize=12, fontweight='bold')
     axes[2, 1].axis('off')
     
-    # Hide the last subplot
-    axes[2, 2].axis('off')
+    # Show lens shading difference (lens_corrected - dark_corrected)
+    try:
+        if (lens_corrected is not None) and (dark_corrected is not None):
+            diff = lens_corrected.astype(np.float64) - dark_corrected.astype(np.float64)
+            vmax = np.max(np.abs(diff))
+            vmax = float(vmax) if np.isfinite(vmax) and vmax > 0 else 1.0
+            im = axes[2, 2].imshow(diff, cmap='coolwarm', vmin=-vmax, vmax=vmax)
+            axes[2, 2].set_title('Lens Shading Diff', fontsize=12, fontweight='bold')
+            axes[2, 2].axis('off')
+        else:
+            axes[2, 2].axis('off')
+    except Exception:
+        axes[2, 2].axis('off')
     
     plt.tight_layout()
     
@@ -736,7 +1019,7 @@ def create_comparison_plot(original: np.ndarray, dark_corrected: np.ndarray,
     plt.show()
 
 def main():
-    """Main function"""
+    """Main function - simplified version"""
     print("=" * 60)
     print("ISP (Image Signal Processing) Pipeline")
     print("=" * 60)
@@ -764,41 +1047,6 @@ def main():
     output_dir.mkdir(exist_ok=True)
     print(f"Output directory: {output_dir}")
     
-    # Load dark reference
-    dark_data = None
-    dark_subtraction_enabled = DARK_SUBTRACTION_ENABLED
-    if dark_subtraction_enabled:
-        print(f"\nLoading dark reference...")
-        dark_data = load_dark_reference(DARK_RAW_PATH, IMAGE_WIDTH, IMAGE_HEIGHT, DATA_TYPE)
-        if dark_data is None:
-            print("Warning: Failed to load dark reference, continuing without dark subtraction")
-            dark_subtraction_enabled = False
-    
-    # Load lens shading parameters
-    lens_shading_params = None
-    lens_shading_enabled = LENS_SHADING_ENABLED
-    if lens_shading_enabled:
-        print(f"\nLoading lens shading parameters...")
-        lens_shading_params = load_correction_parameters(LENS_SHADING_PARAMS_DIR)
-        if lens_shading_params is None:
-            print("Warning: Failed to load lens shading parameters, continuing without lens shading correction")
-            lens_shading_enabled = False
-    
-    # Load white balance parameters
-    wb_params = None
-    white_balance_enabled = WHITE_BALANCE_ENABLED
-    if white_balance_enabled and WB_PARAMS_PATH:
-        print(f"\nLoading white balance parameters...")
-        wb_params = load_white_balance_parameters(WB_PARAMS_PATH)
-        if wb_params is None:
-            print("Warning: Failed to load white balance parameters, continuing without white balance correction")
-            white_balance_enabled = False
-    
-    # CCM parameters
-    ccm_enabled = CCM_ENABLED
-    ccm_matrix_path = CCM_MATRIX_PATH
-    ccm_matrix = np.array(CCM_MATRIX) if CCM_MATRIX else None
-    
     # Process images
     input_path = Path(INPUT_PATH)
     if input_path.is_file():
@@ -814,7 +1062,7 @@ def main():
     
     print(f"\nFound {len(raw_files)} RAW files to process")
     
-    # Process each file
+    # Process each file - parameters are loaded automatically in process_single_image
     for i, raw_file in enumerate(raw_files):
         print(f"\n{'='*60}")
         print(f"Processing file {i+1}/{len(raw_files)}: {raw_file.name}")
@@ -822,18 +1070,18 @@ def main():
         
         result = process_single_image(
             raw_file=str(raw_file),
-            dark_data=dark_data,
-            lens_shading_params=lens_shading_params,
+            dark_data=DARK_RAW_PATH,  # Pass path, will be loaded automatically
+            lens_shading_params=LENS_SHADING_PARAMS_DIR,  # Pass path, will be loaded automatically
             width=IMAGE_WIDTH,
             height=IMAGE_HEIGHT,
             data_type=DATA_TYPE,
-            wb_params=wb_params,
-            dark_subtraction_enabled=dark_subtraction_enabled,
-            lens_shading_enabled=lens_shading_enabled,
-            white_balance_enabled=white_balance_enabled,
-            ccm_enabled=ccm_enabled,
-            ccm_matrix_path=ccm_matrix_path,
-            ccm_matrix=ccm_matrix,
+            wb_params=WB_PARAMS_PATH,  # Pass path, will be loaded automatically
+            dark_subtraction_enabled=DARK_SUBTRACTION_ENABLED,
+            lens_shading_enabled=LENS_SHADING_ENABLED,
+            white_balance_enabled=WHITE_BALANCE_ENABLED,
+            ccm_enabled=CCM_ENABLED,
+            ccm_matrix_path=CCM_MATRIX_PATH,  # No path needed when using global CCM_MATRIX
+            ccm_matrix=np.array(CCM_MATRIX) if CCM_MATRIX else None,
             gamma_correction_enabled=GAMMA_CORRECTION_ENABLED,
             gamma_value=GAMMA_VALUE,
             demosaic_output=DEMOSAIC_OUTPUT

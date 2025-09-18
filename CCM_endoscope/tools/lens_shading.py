@@ -44,12 +44,13 @@ IMAGE_HEIGHT = 2160     # 图像高度
 DATA_TYPE = 'uint16'    # 数据类型
 
 # Lens Shading分析配置
-GRID_SIZE = 16        # 网格大小（建议32x32或64x64）
+GRID_SIZE =   32     # 网格大小（建议32x32或64x64）
 CHANNEL_NAMES = ['R', 'G1', 'G2', 'B']  # RGGB四个通道名称
 MIN_VALID_VALUE = 50  # 最小有效像素值（避免过暗区域）
 MAX_VALID_VALUE = 4095  # 最大有效像素值（避免过亮区域）
 ENABLE_MEDIAN_FILTER = True  # 是否对网格均值进行中值滤波
 MEDIAN_FILTER_SIZE = 3  # 中值滤波核大小（3x3或5x5）
+BLACK_PIXEL_THRESHOLD = 50  # 32x32格内若有像素低于该值，则该格不矫正（系数=1）
 
 # 输出配置 True/False
 OUTPUT_DIRECTORY = r"F:\ZJU\Picture\lens shading\new"
@@ -58,6 +59,7 @@ SAVE_PLOTS = True       # 是否保存图表文件
 SAVE_CORRECTION_MATRIX = True  # 是否保存矫正矩阵
 SAVE_CORRECTED_IMAGES = True   # 是否保存矫正后的图像
 SHOW_INTERACTIVE_PLOTS = True  # 是否显示交互式图像对比
+SHOW_HISTOGRAMS = False        # 是否显示/生成直方图（关闭则不再显示/保存）
 
 # ============================================================================
 # 脚本功能代码（无需修改）
@@ -316,6 +318,74 @@ def separate_rggb_channels(raw_data: np.ndarray) -> Dict[str, np.ndarray]:
     return channels
 
 
+def plot_channel_center_profiles(channels: Dict[str, np.ndarray], title: str = "Channel Center Profiles") -> None:
+    """
+    Plot center horizontal and vertical profiles for R, G1, G2, B channels.
+
+    For each channel array of shape (Hc, Wc):
+    - horizontal profile: values at row Hc//2 across all columns
+    - vertical profile: values at column Wc//2 across all rows
+    """
+    try:
+        import matplotlib.pyplot as plt
+        color_map = {
+            'R': 'red',
+            'G1': 'green',
+            'G2': 'lime',
+            'B': 'blue',
+        }
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        fig.suptitle(title, fontsize=14, fontweight='bold')
+
+        # Define band half-width using grid size to average, fallback to 1
+        try:
+            band = max(1, int(GRID_SIZE // 2))
+        except Exception:
+            band = 1
+
+        # Horizontal profiles (mean of a band around center row)
+        ax_h = axes[0]
+        for name in ['R', 'G1', 'G2', 'B']:
+            if name not in channels:
+                continue
+            ch = channels[name]
+            hh, ww = ch.shape
+            row_c = hh // 2
+            r0 = max(0, row_c - band)
+            r1 = min(hh, row_c + band + 1)
+            prof = np.mean(ch[r0:r1, :].astype(np.float64), axis=0)
+            ax_h.plot(np.arange(ww), prof, label=name, color=color_map.get(name, None), linewidth=1.2)
+        ax_h.set_title(f'Mean Center Row Band (±{band})')
+        ax_h.set_xlabel('Column (channel domain)')
+        ax_h.set_ylabel('Pixel Value')
+        ax_h.grid(True, alpha=0.3)
+        ax_h.legend()
+
+        # Vertical profiles (mean of a band around center column)
+        ax_v = axes[1]
+        for name in ['R', 'G1', 'G2', 'B']:
+            if name not in channels:
+                continue
+            ch = channels[name]
+            hh, ww = ch.shape
+            col_c = ww // 2
+            c0 = max(0, col_c - band)
+            c1 = min(ww, col_c + band + 1)
+            prof = np.mean(ch[:, c0:c1].astype(np.float64), axis=1)
+            ax_v.plot(np.arange(hh), prof, label=name, color=color_map.get(name, None), linewidth=1.2)
+        ax_v.set_title(f'Mean Center Column Band (±{band})')
+        ax_v.set_xlabel('Row (channel domain)')
+        ax_v.set_ylabel('Pixel Value')
+        ax_v.grid(True, alpha=0.3)
+        ax_v.legend()
+
+        plt.tight_layout()
+        plt.show()
+    except Exception as e:
+        print(f"  Error plotting channel center profiles: {e}")
+
+
 def create_grid_analysis(channel_data: np.ndarray, grid_size: int, 
                         min_valid: int, max_valid: int) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -353,8 +423,10 @@ def create_grid_analysis(channel_data: np.ndarray, grid_size: int,
             
             grid_cell = channel_data[start_h:end_h, start_w:end_w]
             
-            # Filter valid pixels
-            valid_mask = (grid_cell >= min_valid) & (grid_cell <= max_valid)
+            # Filter valid pixels: ignore black outliers within the block
+            # Use a stricter lower bound: max(min_valid, BLACK_PIXEL_THRESHOLD)
+            lower_bound = max(min_valid, BLACK_PIXEL_THRESHOLD)
+            valid_mask = (grid_cell >= lower_bound) & (grid_cell <= max_valid)
             valid_pixels = grid_cell[valid_mask]
             
             if len(valid_pixels) > 0:
@@ -590,6 +662,12 @@ def analyze_single_image(raw_file: str, width: int, height: int,
         corrected_image = reconstruct_corrected_image(corrected_channels, 
                                                    {name: result['full_correction'] 
                                                     for name, result in channel_results.items()})
+
+        # Plot center profiles for channels (before correction) for diagnostics
+        try:
+            plot_channel_center_profiles(channels, title=f"Center Profiles - {Path(raw_file).name}")
+        except Exception as e:
+            print(f"  Warning: failed to plot channel profiles: {e}")
         
         # Show interactive comparison if enabled
         if SHOW_INTERACTIVE_PLOTS:
@@ -601,27 +679,9 @@ def analyze_single_image(raw_file: str, width: int, height: int,
                 title=f"Lens Shading Analysis - {Path(raw_file).name}"
             )
         
-        # Analyze RGGB channels histogram (original)
-        print(f"  Analyzing RGGB channels histogram (original)...")
-        original_rggb_histogram_stats = analyze_rggb_channels_histogram(channels)
+        original_rggb_histogram_stats = None
         
-        if 'error' not in original_rggb_histogram_stats:
-            print(f"    Original RGGB histogram analysis completed")
-            for channel_name, stats in original_rggb_histogram_stats.items():
-                print(f"    {channel_name}: Mean={stats['mean']:.1f}, Std={stats['std']:.1f}, SNR={stats['snr']:.1f}")
-        else:
-            print(f"    Original RGGB histogram analysis failed: {original_rggb_histogram_stats['error']}")
-        
-        # Analyze RGGB channels histogram (corrected)
-        print(f"  Analyzing RGGB channels histogram (corrected)...")
-        corrected_rggb_histogram_stats = analyze_rggb_channels_histogram(corrected_channels)
-        
-        if 'error' not in corrected_rggb_histogram_stats:
-            print(f"    Corrected RGGB histogram analysis completed")
-            for channel_name, stats in corrected_rggb_histogram_stats.items():
-                print(f"    {channel_name}: Mean={stats['mean']:.1f}, Std={stats['std']:.1f}, SNR={stats['snr']:.1f}")
-        else:
-            print(f"    Corrected RGGB histogram analysis failed: {corrected_rggb_histogram_stats['error']}")
+        corrected_rggb_histogram_stats = None
         
         result = {
             'filename': raw_file,
@@ -713,14 +773,7 @@ def create_lens_shading_plots(results: List[Dict], output_dir: Path):
         # Create additional comparison plot for full image
         create_image_comparison_plot(result, output_dir, i)
         
-        # Create RGGB histogram comparison plots
-        if ('original_rggb_histogram_stats' in result and 'corrected_rggb_histogram_stats' in result and 
-            'error' not in result['original_rggb_histogram_stats'] and 'error' not in result['corrected_rggb_histogram_stats']):
-            print(f"  Creating RGGB histogram comparison plots for {Path(result['filename']).name}...")
-            base_filename = f"lens_shading_{Path(result['filename']).stem}_{i+1}"
-            create_rggb_histogram_plots(result['original_rggb_histogram_stats'], 
-                                      result['corrected_rggb_histogram_stats'], 
-                                      output_dir, base_filename)
+        # Skip histogram plots per user request
 
 
 def analyze_rggb_channels_histogram(channels: Dict[str, np.ndarray]) -> Dict:
@@ -1027,12 +1080,7 @@ def save_correction_matrices(results: List[Dict], output_dir: Path):
             
             print(f"  {channel_name} correction matrices saved for {base_filename}")
         
-        # Save RGGB histogram data (original and corrected)
-        if ('original_rggb_histogram_stats' in result and 'corrected_rggb_histogram_stats' in result and 
-            'error' not in result['original_rggb_histogram_stats'] and 'error' not in result['corrected_rggb_histogram_stats']):
-            print(f"  Saving RGGB histogram data for {base_filename}...")
-            save_rggb_histogram_data(result['original_rggb_histogram_stats'], output_dir, f"{base_filename}_original")
-            save_rggb_histogram_data(result['corrected_rggb_histogram_stats'], output_dir, f"{base_filename}_corrected")
+        # Skip saving histogram data per user request
     
     # Save combined correction data
     if len(results) > 0 and results[0]['analysis_success']:

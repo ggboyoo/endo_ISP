@@ -85,8 +85,15 @@ DEMOSAIC_METHOD = 'opencv_vng'  # 选择您想要的算法
 # 在process_single_image函数调用中
 result = process_single_image(
     raw_file=raw_file,
+    dark_data=dark_data,
+    lens_shading_params=lens_shading_params,
+    width=width,
+    height=height,
+    data_type=data_type,
+    wb_params=wb_params,
+    ccm_matrix=ccm_matrix,
     # ... 其他参数 ...
-    demosaic_method='opencv_ahd'  # 指定算法
+    demosaic_output=True  # 启用去马赛克输出
 )
 ```
 

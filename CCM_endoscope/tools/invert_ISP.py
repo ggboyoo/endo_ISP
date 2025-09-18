@@ -94,7 +94,7 @@ DEFAULT_CONFIG = {
     
     # 处理开关
     'DARK_SUBTRACTION_ENABLED': True,    # 是否启用暗电流逆校正
-    'LENS_SHADING_ENABLED': True,        # 是否启用镜头阴影逆校正
+    'LENS_SHADING_ENABLED': False,       # 是否启用镜头阴影逆校正
     'WHITE_BALANCE_ENABLED': True,      # 是否启用白平衡逆校正
     'CCM_ENABLED': True,                # 是否启用CCM逆校正
     'GAMMA_CORRECTION_ENABLED': True,   # 是否启用伽马逆校正
@@ -339,8 +339,8 @@ def inverse_ccm_correction(img_12bit: np.ndarray, ccm_matrix: np.ndarray, matrix
     # 重塑回原始形状
     corrected = corrected_flat.reshape(h, w, 3)
     
-    # 裁剪到有效范围并转换回12bit
-    corrected = np.clip(corrected, 0, 4095).astype(np.uint16)
+    # 只裁剪负值，保持精度
+    corrected = np.clip(corrected, 0, None)
     
     print(f"  Inverse CCM correction applied: range {np.min(corrected)}-{np.max(corrected)}")
     
@@ -412,12 +412,49 @@ def inverse_white_balance_correction(img_12bit: np.ndarray, wb_params: Dict[str,
     corrected[:, :, 1] /= g_gain  # G通道
     corrected[:, :, 2] /= r_gain  # R通道
     
-    # 裁剪到有效范围并转换回12bit
-    corrected = np.clip(corrected, 0, 4095).astype(np.uint16)
+    # 只裁剪负值，保持精度
+    corrected = np.clip(corrected, 0, None)
     
     print(f"  Inverse white balance correction applied: range {np.min(corrected)}-{np.max(corrected)}")
     
     return corrected
+
+
+def inverse_white_balance_bayer(raw_bayer: np.ndarray, wb_params: Dict[str, float], bayer_pattern: str = 'rggb') -> np.ndarray:
+    """
+    在拜尔阵列上执行逆白平衡：按位置除以对应通道增益。
+
+    Args:
+        raw_bayer: Bayer RAW (H,W) uint16
+        wb_params: {'r_gain','g_gain','b_gain'}
+        bayer_pattern: 默认 'rggb'
+    Returns:
+        校正后的 Bayer RAW (uint16)
+    """
+    print("Applying inverse white balance on Bayer mosaic...")
+    r_gain = float(wb_params.get('r_gain', 1.0))
+    g_gain = float(wb_params.get('g_gain', 1.0))
+    b_gain = float(wb_params.get('b_gain', 1.0))
+
+    pat = (bayer_pattern or 'rggb').lower()
+    data = raw_bayer.astype(np.float64)
+
+    if pat == 'rggb':
+        data[0::2, 0::2] /= r_gain  # R
+        data[0::2, 1::2] /= g_gain  # G
+        data[1::2, 0::2] /= g_gain  # G
+        data[1::2, 1::2] /= b_gain  # B
+    else:
+        # 简单回退按 rggb 处理
+        data[0::2, 0::2] /= r_gain
+        data[0::2, 1::2] /= g_gain
+        data[1::2, 0::2] /= g_gain
+        data[1::2, 1::2] /= b_gain
+
+    # 只裁剪负值，保持精度
+    data = np.clip(data, 0, None)
+    print("  Inverse WB applied on Bayer domain")
+    return data
 
 def load_dark_reference(dark_path: str, width: int, height: int, data_type: str) -> Optional[np.ndarray]:
     """
@@ -463,8 +500,8 @@ def inverse_dark_subtraction(raw_data: np.ndarray, dark_data: np.ndarray) -> np.
     # 将暗电流加回到RAW数据
     corrected_data = raw_data.astype(np.float64) + dark_data.astype(np.float64)
     
-    # 裁剪到有效范围
-    corrected_data = np.clip(corrected_data, 0, 4095).astype(np.uint16)
+    # 只裁剪负值，保持精度
+    corrected_data = np.clip(corrected_data, 0, None)
     
     print(f"  Inverse dark current correction applied: range {np.min(corrected_data)}-{np.max(corrected_data)}")
     
@@ -493,7 +530,8 @@ def inverse_lens_shading_correction(raw_data: np.ndarray, lens_shading_params: D
             
             # 应用逆校正
             corrected_data = raw_data.astype(np.float64) * inverse_correction_matrix
-            corrected_data = np.clip(corrected_data, 0, 4095).astype(np.uint16)
+            # 只裁剪负值，保持精度
+            corrected_data = np.clip(corrected_data, 0, None)
             
             print(f"  Inverse lens shading correction applied: range {np.min(corrected_data)}-{np.max(corrected_data)}")
             return corrected_data
@@ -568,10 +606,14 @@ def save_raw_data(raw_data: np.ndarray, output_path: str) -> None:
     output_dir = Path(output_path).parent
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # 保存为二进制文件
-    raw_data.astype(np.uint16).tofile(output_path)
+    # 在最后保存时进行clip和uint16转换
+    print(f"  Clipping RAW data to 12-bit range and converting to uint16...")
+    raw_data_clipped = np.clip(raw_data, 0, 4095).astype(np.uint16)
     
-    print(f"  RAW data saved: {raw_data.shape}, range {np.min(raw_data)}-{np.max(raw_data)}")
+    # 保存为二进制文件
+    raw_data_clipped.tofile(output_path)
+    
+    print(f"  RAW data saved: {raw_data_clipped.shape}, range {np.min(raw_data_clipped)}-{np.max(raw_data_clipped)}")
 
 def save_intermediate_image(img_data: np.ndarray, output_path: str, is_12bit: bool = True) -> None:
     """
@@ -710,6 +752,40 @@ def check_dimension_compatibility(data: np.ndarray, target_width: int, target_he
             print(f"      Proceeding with {data_name} correction despite mismatch...")
             return True
 
+def check_lens_shading_compatibility(raw_data: np.ndarray, lens_shading_params: Dict) -> bool:
+    """
+    检查镜头阴影参数是否与RAW图像尺寸兼容
+    
+    Args:
+        raw_data: RAW图像数据
+        lens_shading_params: 镜头阴影参数字典，包含R/G1/G2/B通道的小图
+    
+    Returns:
+        bool: 如果兼容返回True，否则返回False
+    """
+    if lens_shading_params is None:
+        print(f"  Warning: lens_shading_params is None")
+        return False
+    
+    h, w = raw_data.shape[:2]
+    expected_h, expected_w = h // 2, w // 2  # 期望的小图尺寸
+    
+    # 检查每个通道的尺寸
+    channels = ['R', 'G1', 'G2', 'B']
+    for channel in channels:
+        if channel in lens_shading_params:
+            channel_map = lens_shading_params[channel]
+            if channel_map is not None:
+                actual_h, actual_w = channel_map.shape[:2]
+                # 直接判断尺寸是否完全匹配，不允许误差
+                if actual_h != expected_h or actual_w != expected_w:
+                    print(f"  Warning: lens shading {channel} channel dimension mismatch!")
+                    print(f"    Expected: {expected_w}x{expected_h}")
+                    print(f"    Actual: {actual_w}x{actual_h}")
+                    return False
+    
+    return True
+
 def create_comparison_plot(original: np.ndarray, processed: np.ndarray, 
                           title: str = "RAW Comparison", save_path: str = None) -> None:
     """
@@ -820,8 +896,12 @@ def invert_isp_pipeline(image_path: str, config: Dict[str, Any]) -> Dict[str, An
             print("\n3. Applying inverse CCM correction...")
             
             # 优先使用直接提供的CCM矩阵
-            if config.get('CCM_MATRIX') is not None:
+            if config.get('ccm_matrix') is not None:
                 print("  Using provided CCM matrix")
+                ccm_matrix = np.array(config['ccm_matrix'])
+                matrix_type = 'linear3x3'
+            elif config.get('CCM_MATRIX') is not None:
+                print("  Using provided CCM matrix (legacy)")
                 ccm_matrix = np.array(config['CCM_MATRIX'])
                 matrix_type = 'linear3x3'
             elif config['CCM_MATRIX_PATH']:
@@ -839,67 +919,78 @@ def invert_isp_pipeline(image_path: str, config: Dict[str, Any]) -> Dict[str, An
                     output_dir = Path(config['OUTPUT_RAW_PATH']).parent
                     save_intermediate_image(img_inverse_ccm, str(output_dir / "step3_inverse_ccm.png"), is_12bit=True)
             else:
-                img_inverse_ccm = img_inverse_gamma
+                img_inverse_ccm = img_inverse_gamma[:,:,::-1]
+
                 results['step3_inverse_ccm'] = img_inverse_ccm
         else:
             print("\n3. Skipping inverse CCM correction")
-            img_inverse_ccm = img_inverse_gamma
+            img_inverse_ccm = img_inverse_gamma[:,:,::-1]
             results['step3_inverse_ccm'] = img_inverse_ccm
         
-        # 4. 逆白平衡校正
+        # 4. 逆马赛克（先回到Bayer域）
+        print("\n4. Applying inverse demosaicing...")
+        raw_bayer = inverse_demosaic(img_inverse_ccm, config['BAYER_PATTERN'])
+        results['step4_raw_bayer'] = raw_bayer
+        if config['SAVE_INTERMEDIATE']:
+            output_dir = Path(config['OUTPUT_RAW_PATH']).parent
+            save_intermediate_image(raw_bayer, str(output_dir / "step4_raw_bayer.png"), is_12bit=False)
+
+        # 5. 在Bayer域做逆白平衡
         if config['WHITE_BALANCE_ENABLED']:
-            print("\n4. Applying inverse white balance correction...")
-            
-            # 优先使用直接提供的白平衡参数
-            if config.get('WB_PARAMS') is not None:
+            print("\n5. Applying inverse white balance on Bayer...")
+            if config.get('wb_params') is not None:
                 print("  Using provided white balance parameters")
-                wb_params = config['WB_PARAMS']['white_balance_gains']
+                wb_params_dict = config['wb_params']
+                if 'white_balance_gains' in wb_params_dict:
+                    wb_params = wb_params_dict['white_balance_gains']
+                else:
+                    # 如果wb_params直接包含增益值
+                    wb_params = wb_params_dict
+            elif config.get('WB_PARAMS') is not None:
+                print("  Using provided white balance parameters (legacy)")
+                wb_params_dict = config['WB_PARAMS']
+                if 'white_balance_gains' in wb_params_dict:
+                    wb_params = wb_params_dict['white_balance_gains']
+                else:
+                    wb_params = wb_params_dict
             elif config['WB_PARAMS_PATH']:
                 wb_params = load_white_balance_parameters(config['WB_PARAMS_PATH'])
             else:
                 print("  No white balance parameters provided, skipping...")
                 wb_params = None
-            
             if wb_params is not None:
-                img_inverse_wb = inverse_white_balance_correction(img_inverse_ccm, wb_params)
-                results['step4_inverse_wb'] = img_inverse_wb
-                
-                if config['SAVE_INTERMEDIATE']:
-                    output_dir = Path(config['OUTPUT_RAW_PATH']).parent
-                    save_intermediate_image(img_inverse_wb, str(output_dir / "step4_inverse_wb.png"), is_12bit=True)
+                raw_data = inverse_white_balance_bayer(raw_bayer, wb_params, config['BAYER_PATTERN'])
             else:
-                img_inverse_wb = img_inverse_ccm
-                results['step4_inverse_wb'] = img_inverse_wb
+                raw_data = raw_bayer
         else:
-            print("\n4. Skipping inverse white balance correction")
-            img_inverse_wb = img_inverse_ccm
-            results['step4_inverse_wb'] = img_inverse_wb
-        
-        # 5. 逆马赛克（Bayer插值）
-        print("\n5. Applying inverse demosaicing...")
-        raw_data = inverse_demosaic(img_inverse_wb, config['BAYER_PATTERN'])
+            print("\n5. Skipping inverse white balance on Bayer")
+            raw_data = raw_bayer
         results['step5_raw'] = raw_data
         
         # 6. 逆镜头阴影校正
-        if config['LENS_SHADING_ENABLED'] and config.get('LENS_SHADING_PARAMS_DIR'):
+        if config['LENS_SHADING_ENABLED']:
             print("\n6. Applying inverse lens shading correction...")
-            lens_shading_params = load_correction_parameters(config['LENS_SHADING_PARAMS_DIR'])
+            # 优先使用直接提供的镜头阴影参数
+            if config.get('lens_shading_params') is not None:
+                print("  Using provided lens shading parameters")
+                lens_shading_params = config['lens_shading_params']
+            elif config.get('LENS_SHADING_PARAMS_DIR'):
+                lens_shading_params = load_correction_parameters(config['LENS_SHADING_PARAMS_DIR'])
+            else:
+                print("  No lens shading parameters provided, skipping...")
+                lens_shading_params = None
+                
             if lens_shading_params is not None:
                 # 检查镜头阴影参数是否与图像尺寸匹配
-                if 'correction_map' in lens_shading_params:
-                    correction_map = lens_shading_params['correction_map']
-                    if check_dimension_compatibility(correction_map, actual_width, actual_height, "lens shading correction map", config):
-                        raw_data = inverse_lens_shading_correction(raw_data, lens_shading_params)
-                        results['step6_inverse_lens_shading'] = raw_data
-                        
-                        if config['SAVE_INTERMEDIATE']:
-                            output_dir = Path(config['OUTPUT_RAW_PATH']).parent
-                            save_intermediate_image(raw_data, str(output_dir / "step6_inverse_lens_shading.png"), is_12bit=False)
-                    else:
-                        print("  Skipping lens shading correction due to dimension mismatch")
-                        results['step6_inverse_lens_shading'] = raw_data  # 保持原始数据
+                if check_lens_shading_compatibility(raw_data, lens_shading_params):
+                    raw_data = inverse_lens_shading_correction(raw_data, lens_shading_params)
+                    results['step6_inverse_lens_shading'] = raw_data
+                    
+                    if config['SAVE_INTERMEDIATE']:
+                        output_dir = Path(config['OUTPUT_RAW_PATH']).parent
+                        save_intermediate_image(raw_data, str(output_dir / "step6_inverse_lens_shading.png"), is_12bit=False)
                 else:
-                    print("  No correction map found in lens shading parameters, skipping...")
+                    print("  Skipping lens shading correction due to dimension mismatch")
                     results['step6_inverse_lens_shading'] = raw_data  # 保持原始数据
             else:
                 print("  Failed to load lens shading parameters, skipping...")
@@ -909,9 +1000,18 @@ def invert_isp_pipeline(image_path: str, config: Dict[str, Any]) -> Dict[str, An
             results['step6_inverse_lens_shading'] = raw_data  # 保持原始数据
         
         # 7. 逆暗电流校正
-        if config['DARK_SUBTRACTION_ENABLED'] and config.get('DARK_RAW_PATH'):
+        if config['DARK_SUBTRACTION_ENABLED']:
             print("\n7. Applying inverse dark current correction...")
-            dark_data = load_dark_reference(config['DARK_RAW_PATH'], config['IMAGE_WIDTH'], config['IMAGE_HEIGHT'], config['DATA_TYPE'])
+            # 优先使用直接提供的暗电流数据
+            if config.get('dark_data') is not None:
+                print("  Using provided dark data")
+                dark_data = config['dark_data']
+            elif config.get('DARK_RAW_PATH'):
+                dark_data = load_dark_reference(config['DARK_RAW_PATH'], config['IMAGE_WIDTH'], config['IMAGE_HEIGHT'], config['DATA_TYPE'])
+            else:
+                print("  No dark data provided, skipping...")
+                dark_data = None
+                
             if dark_data is not None:
                 # 检查暗电流数据是否与图像尺寸匹配
                 if check_dimension_compatibility(dark_data, actual_width, actual_height, "dark reference", config):
@@ -957,16 +1057,48 @@ def invert_isp_pipeline(image_path: str, config: Dict[str, Any]) -> Dict[str, An
                 create_comparison_plot(raw_data, raw_data, "RAW Processing Result", comparison_path)
         
         # 保存处理报告
+        # 创建JSON序列化安全的配置副本
+        safe_config = {}
+        for key, value in config.items():
+            if isinstance(value, np.ndarray):
+                # 将numpy数组转换为列表或形状信息
+                if value.size < 100:  # 小数组转换为列表
+                    safe_config[key] = value.tolist()
+                else:  # 大数组只保存形状和类型信息
+                    safe_config[key] = {
+                        'shape': list(value.shape),
+                        'dtype': str(value.dtype),
+                        'size': int(value.size)
+                    }
+            elif isinstance(value, dict):
+                # 递归处理字典中的numpy数组
+                safe_value = {}
+                for sub_key, sub_value in value.items():
+                    if isinstance(sub_value, np.ndarray):
+                        if sub_value.size < 100:
+                            safe_value[sub_key] = sub_value.tolist()
+                        else:
+                            safe_value[sub_key] = {
+                                'shape': list(sub_value.shape),
+                                'dtype': str(sub_value.dtype),
+                                'size': int(sub_value.size)
+                            }
+                    else:
+                        safe_value[sub_key] = sub_value
+                safe_config[key] = safe_value
+            else:
+                safe_config[key] = value
+        
         report = {
             'timestamp': datetime.now().isoformat(),
             'input_image': image_path,
             'output_raw': config['OUTPUT_RAW_PATH'],
-            'config': config,
+            'config': safe_config,
             'processing_success': True,
             'image_info': {
-                'original_shape': img_12bit.shape,
+                'original_shape': list(img_12bit.shape),
                 'actual_dimensions': f"{actual_width}x{actual_height}",
-                'raw_shape': raw_data.shape,
+                'raw_shape': list(raw_data.shape),
                 'raw_range': [int(np.min(raw_data)), int(np.max(raw_data))],
                 'raw_dtype': str(raw_data.dtype)
             }

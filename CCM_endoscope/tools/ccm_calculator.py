@@ -379,7 +379,7 @@ def solve_ccm_with_white_constraint(measured_rgb: np.ndarray, reference_rgb: np.
 
 def solve_ccm_gradient_optimization(measured_rgb: np.ndarray, reference_rgb: np.ndarray, cfg: CCMSolveConfig) -> np.ndarray:
     """Solve CCM using gradient-based optimization in Lab space"""
-    assert measured_rgb.shape == reference_rgb.shape == (24, 3)
+    # assert measured_rgb.shape == reference_rgb.shape == (24, 3)
     
     # Initial guess using least squares
     if cfg.model == "linear3x3":

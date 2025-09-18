@@ -49,8 +49,10 @@ SAVE_FORMATS = ['raw', 'png', 'jpg']  # 保存格式：raw, png, jpg
 PROCESS_MODE = 'single'  # 'single' 或 'batch'
 
 # 直方图显示配置
-SHOW_HISTOGRAMS = False    # 是否显示矫正前后直方图对比
-SAVE_HISTOGRAMS = False    # 是否保存直方图到文件
+SHOW_HISTOGRAMS = True    # 是否显示矫正前后直方图对比
+SAVE_HISTOGRAMS = True   # 是否显示矫正前后直方图对比
+   # 是否显示矫正前后直方图对比
+    # 是否保存直方图到文件
 
 # ============================================================================
 # 直方图显示功能

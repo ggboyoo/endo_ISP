@@ -117,6 +117,7 @@ def process_single_raw_file(raw_file: Path, output_dir: Path, config: Dict,
             white_balance_enabled=config['WHITE_BALANCE_ENABLED'],
             ccm_enabled=config['CCM_ENABLED'],
             ccm_matrix_path=config.get('CCM_MATRIX_PATH'),
+            ccm_matrix=config.get('CCM_MATRIX'),
             demosaic_output=True
         )
         

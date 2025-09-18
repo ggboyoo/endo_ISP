@@ -23,7 +23,7 @@ except Exception:  # pragma: no cover
 # =========================
 # Required
 INPUT_PATH: str = r"F:\ZJU\Picture\invert_isp\inverted_output.raw"  # e.g. r"E:\\path\\to\\input.raw" or .npy/.png
-g:int = 1
+g:int = 8
 GAIN: float = 0.3754*g+0.7559  # must be > 0
 OUTPUT_PATH: str = rf"F:\ZJU\Picture\noise_add\g{g}dark_shading_hot.png"  # e.g. r"E:\\path\\to\\output.png"
 

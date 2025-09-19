@@ -1,231 +1,221 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Dark Image Analysis Script
-Reads dark RAW images and performs FFT analysis to visualize noise characteristics
+Dark RAW Image Analysis Tool
+读取暗场RAW图像，绘制直方图，并去除异常大值
 """
 
-import os
 import numpy as np
 import matplotlib.pyplot as plt
+import os
 from pathlib import Path
-from typing import Optional, Tuple, List
-import json
-from datetime import datetime
 
-# Import RAW reader
-try:
-    from raw_reader import read_raw_image
-except ImportError:
-    print("Error: raw_reader.py not found in the same directory!")
-    print("Please ensure raw_reader.py is in the same directory as this script.")
-    exit(1)
+# 配置参数
+DARK_RAW_PATH = r"F:\ZJU\Picture\dark\g5\average_dark.raw" # 暗场RAW图像路径
+IMAGE_WIDTH = 3840
+IMAGE_HEIGHT = 2160
+DATA_TYPE = np.uint16
+OUTPUT_DIRECTORY = "dark_analysis_output"
 
+# 异常值阈值
+OUTLIER_THRESHOLD = 100
 
-def load_dark_image(dark_path: str, width: int, height: int, data_type: str = 'uint16') -> Optional[np.ndarray]:
-    """Load dark reference image"""
+def read_raw_image(file_path, width, height, dtype=np.uint16):
+    """读取RAW图像文件"""
     try:
-        if not os.path.exists(dark_path):
-            print(f"Dark reference file not found: {dark_path}")
-            return None
+        with open(file_path, 'rb') as f:
+            raw_data = np.frombuffer(f.read(), dtype=dtype)
         
-        dark_data = read_raw_image(dark_path, width, height, data_type)
-        if dark_data is not None:
-            print(f"Dark reference loaded: {dark_data.shape}, range: {np.min(dark_data)}-{np.max(dark_data)}")
-        return dark_data
+        if len(raw_data) != width * height:
+            print(f"警告: 数据长度 {len(raw_data)} 与预期 {width * height} 不匹配")
+            # 尝试调整尺寸
+            if len(raw_data) == width * height * 2:  # 可能是16位数据
+                raw_data = raw_data.reshape(height, width)
+            else:
+                raw_data = raw_data[:width * height].reshape(height, width)
+        else:
+            raw_data = raw_data.reshape(height, width)
+        
+        return raw_data
     except Exception as e:
-        print(f"Error loading dark reference: {e}")
+        print(f"读取RAW文件失败: {e}")
         return None
 
-
-def compute_fft_2d(image: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Compute 2D FFT of the image
+def analyze_dark_image(raw_data, threshold=100):
+    """分析暗场图像"""
+    print(f"图像尺寸: {raw_data.shape}")
+    print(f"数据类型: {raw_data.dtype}")
+    print(f"数值范围: {raw_data.min()} - {raw_data.max()}")
+    print(f"均值: {raw_data.mean():.2f}")
+    print(f"标准差: {raw_data.std():.2f}")
     
-    Args:
-        image: Input image (2D array)
+    # 统计异常值
+    outliers = raw_data > threshold
+    outlier_count = np.sum(outliers)
+    outlier_percentage = (outlier_count / raw_data.size) * 100
+    
+    print(f"异常值统计 (> {threshold}):")
+    print(f"  数量: {outlier_count}")
+    print(f"  百分比: {outlier_percentage:.2f}%")
+    
+    # 去除异常值后的统计
+    cleaned_data = raw_data.copy()
+    cleaned_data[outliers] = 0  # 将异常值设为0
+    
+    print(f"去除异常值后:")
+    print(f"  均值: {cleaned_data.mean():.2f}")
+    print(f"  标准差: {cleaned_data.std():.2f}")
+    
+    return cleaned_data, outliers
+
+def plot_histogram(raw_data, outliers, threshold=100, save_path=None):
+    """绘制直方图"""
+    fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+    fig.suptitle('Dark RAW Image Analysis - Normal Pixels Only', fontsize=16)
+    
+    # 只对正常像素绘制直方图（剔除异常值）
+    normal_pixels = raw_data[~outliers]  # 使用~outliers获取非异常值
+    
+    # 计算直方图数据
+    hist, bin_edges = np.histogram(normal_pixels.flatten(), bins=50)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    
+    # 绘制直方图
+    bars = axes[0].bar(bin_centers, hist, alpha=0.7, color='green', edgecolor='black', width=bin_edges[1]-bin_edges[0])
+    axes[0].axvline(threshold, color='red', linestyle='--', linewidth=2, label=f'Threshold = {threshold}')
+    axes[0].set_title('Normal Pixels Histogram (Outliers Excluded)')
+    axes[0].set_xlabel('Pixel Value')
+    axes[0].set_ylabel('Pixel Count')
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+     
+    # 在横坐标上标注像素值
+    # 只标注有像素的bin的像素值
+    for i, (center, count) in enumerate(zip(bin_centers, hist)):
+        if count > 0:  # 只标注有像素的bin
+            # 在横坐标下方标注像素值
+            axes[0].text(center, -max(hist) * 0.05, f'{int(center)}', 
+                        ha='center', va='top', fontsize=8, color='blue', rotation=45)
+     
+    # 对正常像素进行归一化显示
+    normal_pixels = raw_data[~outliers]  # 获取正常像素
+    if len(normal_pixels) > 0:
+        # 计算正常像素的最大值和最小值
+        normal_min = normal_pixels.min()
+        normal_max = 10
         
-    Returns:
-        fft_magnitude: Magnitude spectrum
-        fft_phase: Phase spectrum  
-        fft_shifted: Shifted FFT (DC component at center)
-    """
-    # Convert to float for FFT
-    img_float = image.astype(np.float64)
-    
-    # Compute 2D FFT
-    fft = np.fft.fft2(img_float)
-    fft_shifted = np.fft.fftshift(fft)
-    
-    # Compute magnitude and phase
-    fft_magnitude = np.abs(fft_shifted)
-    fft_phase = np.angle(fft_shifted)
-    
-    return fft_magnitude, fft_phase, fft_shifted
-
-
-def compute_radial_profile(fft_magnitude: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Compute radial profile of FFT magnitude
-    
-    Args:
-        fft_magnitude: 2D FFT magnitude spectrum
+        # 归一化正常像素到0-1范围
+        if normal_max > normal_min:
+            normalized_image = (raw_data - normal_min) / (normal_max - normal_min)
+            normalized_image = np.clip(normalized_image, 0, 1)  # 确保在0-1范围内
+        else:
+            normalized_image = np.zeros_like(raw_data, dtype=np.float64)
         
-    Returns:
-        radii: Radial distances from center
-        profile: Average magnitude at each radius
-    """
-    h, w = fft_magnitude.shape
-    center_y, center_x = h // 2, w // 2
+        im1 = axes[1].imshow(normalized_image, cmap='gray', vmin=0, vmax=1)
+        axes[1].set_title(f'Normalized Dark Image (Normal: {normal_min}-{normal_max})')
+    else:
+        im1 = axes[1].imshow(raw_data, cmap='gray', vmin=0, vmax=raw_data.max())
+        axes[1].set_title('Original Dark Image')
     
-    # Create coordinate grids
-    y, x = np.ogrid[:h, :w]
-    r = np.sqrt((x - center_x)**2 + (y - center_y)**2)
-    
-    # Bin the radii
-    r_max = min(center_x, center_y)
-    r_bins = np.arange(0, r_max + 1)
-    
-    # Compute radial profile
-    profile = []
-    radii = []
-    
-    for i in range(len(r_bins) - 1):
-        mask = (r >= r_bins[i]) & (r < r_bins[i + 1])
-        if np.any(mask):
-            profile.append(np.mean(fft_magnitude[mask]))
-            radii.append((r_bins[i] + r_bins[i + 1]) / 2)
-    
-    return np.array(radii), np.array(profile)
-
-
-def analyze_dark_image(dark_data: np.ndarray, output_dir: Path) -> None:
-    """
-    Perform comprehensive FFT analysis on dark image
-    
-    Args:
-        dark_data: Dark reference image
-        output_dir: Output directory for plots
-    """
-    print("Performing FFT analysis on dark image...")
-    
-    # Create output directory
-    output_dir.mkdir(exist_ok=True)
-    
-    # 1. Basic statistics
-    print(f"Dark image statistics:")
-    print(f"  Shape: {dark_data.shape}")
-    print(f"  Data type: {dark_data.dtype}")
-    print(f"  Min: {np.min(dark_data)}")
-    print(f"  Max: {np.max(dark_data)}")
-    print(f"  Mean: {np.mean(dark_data):.2f}")
-    print(f"  Std: {np.std(dark_data):.2f}")
-    
-    # 2. Compute FFT
-    fft_magnitude, fft_phase, fft_shifted = compute_fft_2d(dark_data)
-    
-    # 3. Compute radial profile
-    radii, radial_profile = compute_radial_profile(fft_magnitude)
-    
-    # 4. Create plots - dark image and FFT spectrum
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    
-    # Original dark image (left)
-    im1 = axes[0].imshow(dark_data, cmap='gray')
-    axes[0].set_title('Dark Image', fontsize=12, fontweight='bold')
-    axes[0].axis('off')
-    cbar1 = plt.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
-    cbar1.set_label('Pixel Value', rotation=270, labelpad=15)
-    
-    # FFT magnitude spectrum (right) - using viridis colormap like in the reference
-    log_magnitude = np.log10(fft_magnitude + 1e-10)  # Add small value to avoid log(0)
-    im2 = axes[1].imshow(log_magnitude, cmap='viridis', aspect='equal')
-    axes[1].set_title('FFT Magnitude Spectrum', fontsize=12, fontweight='bold')
     axes[1].axis('off')
-    cbar2 = plt.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
-    cbar2.set_label('Log Magnitude', rotation=270, labelpad=15)
+    plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
     
-    # Set equal aspect ratio for both plots to make them square
-    axes[0].set_aspect('equal')
-    axes[1].set_aspect('equal')
+    # 添加统计信息
+    stats_text = f'Normal Pixels: {len(normal_pixels):,}\n'
+    stats_text += f'Outliers: {np.sum(outliers):,}\n'
+    stats_text += f'Mean: {normal_pixels.mean():.2f}\n'
+    stats_text += f'Std: {normal_pixels.std():.2f}\n'
+    stats_text += f'Min: {normal_pixels.min()}\n'
+    stats_text += f'Max: {normal_pixels.max()}'
+    
+    axes[0].text(0.02, 0.98, stats_text, transform=axes[0].transAxes, 
+                verticalalignment='top', bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8))
     
     plt.tight_layout()
     
-    # Save the plot
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    plot_path = output_dir / f"dark_analysis_plot_{timestamp}.png"
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    print(f"Analysis plot saved: {plot_path}")
-    
-    # Save analysis data
-    analysis_data = {
-        'timestamp': timestamp,
-        'image_shape': dark_data.shape,
-        'image_dtype': str(dark_data.dtype),
-        'statistics': {
-            'min': float(np.min(dark_data)),
-            'max': float(np.max(dark_data)),
-            'mean': float(np.mean(dark_data)),
-            'std': float(np.std(dark_data)),
-            'var': float(np.var(dark_data))
-        },
-        'fft_statistics': {
-            'max_magnitude': float(np.max(fft_magnitude)),
-            'mean_magnitude': float(np.mean(fft_magnitude)),
-            'dc_component': float(fft_magnitude[dark_data.shape[0]//2, dark_data.shape[1]//2])
-        },
-        'radial_profile': {
-            'radii': radii.tolist(),
-            'profile': radial_profile.tolist()
-        }
-    }
-    
-    json_path = output_dir / f"dark_analysis_{timestamp}.json"
-    with open(json_path, 'w') as f:
-        json.dump(analysis_data, f, indent=2)
-    print(f"Analysis data saved: {json_path}")
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"直方图已保存到: {save_path}")
     
     plt.show()
 
-
-# ============================================================================
-# 配置参数 - 直接在这里修改，无需命令行输入
-# ============================================================================
-
-# 输入文件配置
-DARK_RAW_PATH = r"F:\ZJU\Picture\dark\g9\25-09-01 155313.raw"  # 暗电流图像路径
-
-# 图像参数配置
-IMAGE_WIDTH = 3840      # 图像宽度
-IMAGE_HEIGHT = 2160     # 图像高度
-DATA_TYPE = 'uint16'    # 数据类型
-
-# 输出配置
-OUTPUT_DIRECTORY = "dark_analysis_output"  # 输出目录
-
+def plot_outlier_distribution(raw_data, outliers, threshold=100, save_path=None):
+    """绘制异常值分布图"""
+    fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+    fig.suptitle('Outlier Distribution Analysis', fontsize=16)
+    
+    # 异常值位置图
+    axes[0].imshow(outliers, cmap='Reds', alpha=0.8)
+    axes[0].set_title(f'Outlier Locations (> {threshold})')
+    axes[0].axis('off')
+    
+    # 异常值统计
+    outlier_values = raw_data[outliers]
+    if len(outlier_values) > 0:
+        axes[1].hist(outlier_values, bins=50, alpha=0.7, color='red', edgecolor='black')
+        axes[1].set_title('Outlier Value Distribution')
+        axes[1].set_xlabel('Outlier Value')
+        axes[1].set_ylabel('Frequency')
+        axes[1].grid(True, alpha=0.3)
+        
+        # 添加统计信息
+        axes[1].text(0.7, 0.8, f'Count: {len(outlier_values)}\nMin: {outlier_values.min()}\nMax: {outlier_values.max()}\nMean: {outlier_values.mean():.2f}', 
+                    transform=axes[1].transAxes, bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7))
+    else:
+        axes[1].text(0.5, 0.5, 'No outliers found', ha='center', va='center', transform=axes[1].transAxes)
+        axes[1].set_title('Outlier Value Distribution')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"异常值分布图已保存到: {save_path}")
+    
+    plt.show()
 
 def main():
-    """Main function"""
-    print("=" * 60)
-    print("Dark Image FFT Analysis")
-    print("=" * 60)
-    print(f"Input file: {DARK_RAW_PATH}")
-    print(f"Image size: {IMAGE_WIDTH}x{IMAGE_HEIGHT}")
-    print(f"Data type: {DATA_TYPE}")
-    print(f"Output directory: {OUTPUT_DIRECTORY}")
-    print("=" * 60)
+    """主函数"""
+    print("Dark RAW Image Analysis Tool")
+    print("=" * 50)
     
-    # Load dark image
-    dark_data = load_dark_image(DARK_RAW_PATH, IMAGE_WIDTH, IMAGE_HEIGHT, DATA_TYPE)
-    if dark_data is None:
-        print("Failed to load dark image")
+    # 检查输入文件
+    if not os.path.exists(DARK_RAW_PATH):
+        print(f"错误: 找不到文件 {DARK_RAW_PATH}")
         return
     
-    # Perform analysis
+    # 创建输出目录
     output_dir = Path(OUTPUT_DIRECTORY)
-    analyze_dark_image(dark_data, output_dir)
+    output_dir.mkdir(exist_ok=True)
     
-    print("\nAnalysis complete!")
-
+    # 读取RAW图像
+    print(f"读取RAW图像: {DARK_RAW_PATH}")
+    raw_data = read_raw_image(DARK_RAW_PATH, IMAGE_WIDTH, IMAGE_HEIGHT, DATA_TYPE)
+    
+    if raw_data is None:
+        print("读取失败，程序退出")
+        return
+    
+    # 分析暗场图像
+    print("\n分析暗场图像...")
+    cleaned_data, outliers = analyze_dark_image(raw_data, OUTLIER_THRESHOLD)
+    
+    # 绘制直方图
+    print("\n绘制直方图...")
+    histogram_path = output_dir / f"dark_histogram_analysis_{OUTLIER_THRESHOLD}.png"
+    plot_histogram(raw_data, outliers, OUTLIER_THRESHOLD, histogram_path)
+    
+    # 保存清理后的数据
+    cleaned_path = output_dir / "cleaned_dark.raw"
+    with open(cleaned_path, 'wb') as f:
+        f.write(cleaned_data.astype(DATA_TYPE).tobytes())
+    print(f"\n清理后的数据已保存到: {cleaned_path}")
+    
+    # 保存异常值掩码
+    mask_path = output_dir / "outlier_mask.npy"
+    np.save(mask_path, outliers)
+    print(f"异常值掩码已保存到: {mask_path}")
+    
+    print("\n分析完成！")
 
 if __name__ == "__main__":
     main()

@@ -207,7 +207,8 @@ def load_image_as_12bit(image_path: str) -> Tuple[np.ndarray, int, int]:
     img_normalized = img_rgb.astype(np.float64) / 255.0
     
     # 转换为12bit数据（存储在16bit容器中）
-    img_12bit = (img_normalized * 4095.0).astype(np.uint16)
+    # 四舍五入后再转换，减少量化偏差
+    img_12bit = np.round(img_normalized * 4095.0).astype(np.uint16)
     
     print(f"  Converted to 12bit: {img_12bit.shape}, range: {np.min(img_12bit)}-{np.max(img_12bit)}")
     
@@ -230,10 +231,10 @@ def inverse_gamma_correction(img_12bit: np.ndarray, gamma: float = 2.2) -> np.nd
     img_float = img_12bit.astype(np.float64) / 4095.0
     
     # 应用逆伽马校正
-    img_inverse_gamma = np.power(img_float, gamma)
+    img_inverse_gamma = img_float ** gamma
     
     # 转换回12bit数据
-    img_corrected = (img_inverse_gamma * 4095.0).astype(np.uint16)
+    img_corrected = (img_inverse_gamma * 4095.0)
     
     print(f"  Inverse gamma correction applied: range {np.min(img_corrected)}-{np.max(img_corrected)}")
     
@@ -298,7 +299,7 @@ def inverse_ccm_correction(img_12bit: np.ndarray, ccm_matrix: np.ndarray, matrix
     print(f"Applying inverse CCM correction ({matrix_type})...")
     
     # 转换为浮点数
-    img_float = img_12bit.astype(np.float64)
+    img_float = img_12bit.astype(np.float64)[:,:,::-1]
     
     # 重塑为2D数组用于矩阵运算
     h, w, c = img_float.shape
@@ -309,11 +310,11 @@ def inverse_ccm_correction(img_12bit: np.ndarray, ccm_matrix: np.ndarray, matrix
         # 3x3线性变换的逆
         try:
             inv_matrix = np.linalg.inv(ccm_matrix)
-            corrected_flat = np.dot(img_flat, (inv_matrix.T)[:,[2,1,0]])
+            corrected_flat = np.dot(img_flat, (inv_matrix.T)).reshape(h, w, 3)
         except np.linalg.LinAlgError:
             print("  Warning: Matrix is singular, using pseudo-inverse")
             inv_matrix = np.linalg.pinv(ccm_matrix)
-            corrected_flat = np.dot(img_flat,  (inv_matrix.T)[:,[2,1,0]])
+            corrected_flat = np.dot(img_flat,  (inv_matrix.T)).reshape(h, w, 3)
     elif matrix_type == 'affine3x4':
         # 3x4仿射变换的逆
         # 对于仿射变换 [R|t]，逆变换为 [R^-1|-R^-1*t]
@@ -337,10 +338,10 @@ def inverse_ccm_correction(img_12bit: np.ndarray, ccm_matrix: np.ndarray, matrix
         raise ValueError(f"Unsupported matrix type: {matrix_type}")
     
     # 重塑回原始形状
-    corrected = corrected_flat.reshape(h, w, 3)
+    corrected = corrected_flat[:,:,::-1]
     
     # 只裁剪负值，保持精度
-    corrected = np.clip(corrected, 0, None)
+    corrected = np.clip(corrected, 0, 4095)
     
     print(f"  Inverse CCM correction applied: range {np.min(corrected)}-{np.max(corrected)}")
     
@@ -493,9 +494,6 @@ def inverse_dark_subtraction(raw_data: np.ndarray, dark_data: np.ndarray) -> np.
     """
     print("Applying inverse dark current correction...")
     
-    # 确保数据类型一致
-    if raw_data.dtype != dark_data.dtype:
-        raw_data = raw_data.astype(dark_data.dtype)
     
     # 将暗电流加回到RAW数据
     corrected_data = raw_data.astype(np.float64) + dark_data.astype(np.float64)
@@ -559,7 +557,7 @@ def inverse_demosaic(img_12bit: np.ndarray, bayer_pattern: str = 'rggb') -> np.n
     h, w, c = img_12bit.shape
     
     # 创建Bayer RAW数组
-    raw_data = np.zeros((h, w), dtype=np.uint16)
+    raw_data = np.zeros((h, w), dtype=np.float64)
     
     if bayer_pattern.lower() == 'rggb':
         # RGGB模式
@@ -608,7 +606,8 @@ def save_raw_data(raw_data: np.ndarray, output_path: str) -> None:
     
     # 在最后保存时进行clip和uint16转换
     print(f"  Clipping RAW data to 12-bit range and converting to uint16...")
-    raw_data_clipped = np.clip(raw_data, 0, 4095).astype(np.uint16)
+    # 四舍五入后再转换
+    raw_data_clipped = np.round(np.clip(raw_data, 0, 4095)).astype(np.uint16)
     
     # 保存为二进制文件
     raw_data_clipped.tofile(output_path)
@@ -637,14 +636,16 @@ def save_intermediate_image(img_data: np.ndarray, output_path: str, is_12bit: bo
         # 12bit数据需要转换为8bit保存
         if len(img_data.shape) == 3:
             # 彩色图像
-            img_8bit = (img_data.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
+            # 四舍五入后再转换
+            img_8bit = np.round((img_data.astype(np.float32) / 4095.0) * 255.0).astype(np.uint8)
             img_bgr = cv2.cvtColor(img_8bit, cv2.COLOR_RGB2BGR)
             success = imwrite_unicode(output_path, img_bgr)
             if not success:
                 cv2.imwrite(output_path, img_bgr)
         else:
             # 灰度图像
-            img_8bit = (img_data.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
+            # 四舍五入后再转换
+            img_8bit = np.round((img_data.astype(np.float32) / 4095.0) * 255.0).astype(np.uint8)
             success = imwrite_unicode(output_path, img_8bit)
             if not success:
                 cv2.imwrite(output_path, img_8bit)
@@ -672,7 +673,8 @@ def display_raw_as_grayscale(raw_data: np.ndarray, title: str = "RAW Image", sav
     
     if max_val > 0:
         # 归一化到0-255范围
-        img_8bit = (raw_data.astype(np.float32) / max_val * 255.0).astype(np.uint8)
+        # 四舍五入后再转换
+        img_8bit = np.round((raw_data.astype(np.float32) / max_val) * 255.0).astype(np.uint8)
     else:
         img_8bit = np.zeros_like(raw_data, dtype=np.uint8)
     
@@ -865,8 +867,14 @@ def invert_isp_pipeline(image_path: str, config: Dict[str, Any]) -> Dict[str, An
     try:
         # 1. 加载图像并转换为12bit数据
         print("\n1. Loading and converting to 12bit data...")
-        img_12bit, actual_width, actual_height = load_image_as_12bit(image_path)
-        results['step1_12bit'] = img_12bit
+        if isinstance(image_path, np.ndarray):
+            img_12bit = image_path
+            actual_width = img_12bit.shape[1]
+            actual_height = img_12bit.shape[0]
+            results['step1_12bit'] = img_12bit
+        else:
+            img_12bit, actual_width, actual_height = load_image_as_12bit(image_path)
+            results['step1_12bit'] = img_12bit
         
         # 更新配置中的图像尺寸为实际尺寸
         config['IMAGE_WIDTH'] = actual_width
@@ -881,6 +889,9 @@ def invert_isp_pipeline(image_path: str, config: Dict[str, Any]) -> Dict[str, An
         if config['GAMMA_CORRECTION_ENABLED']:
             print("\n2. Applying inverse gamma correction...")
             img_inverse_gamma = inverse_gamma_correction(img_12bit, config['GAMMA_VALUE'])
+
+            print(f"mean:{np.mean(img_inverse_gamma)}")
+
             results['step2_inverse_gamma'] = img_inverse_gamma
             
             if config['SAVE_INTERMEDIATE']:
@@ -919,12 +930,12 @@ def invert_isp_pipeline(image_path: str, config: Dict[str, Any]) -> Dict[str, An
                     output_dir = Path(config['OUTPUT_RAW_PATH']).parent
                     save_intermediate_image(img_inverse_ccm, str(output_dir / "step3_inverse_ccm.png"), is_12bit=True)
             else:
-                img_inverse_ccm = img_inverse_gamma[:,:,::-1]
+                img_inverse_ccm = img_inverse_gamma
 
                 results['step3_inverse_ccm'] = img_inverse_ccm
         else:
             print("\n3. Skipping inverse CCM correction")
-            img_inverse_ccm = img_inverse_gamma[:,:,::-1]
+            img_inverse_ccm = img_inverse_gamma
             results['step3_inverse_ccm'] = img_inverse_ccm
         
         # 4. 逆马赛克（先回到Bayer域）
@@ -1035,7 +1046,7 @@ def invert_isp_pipeline(image_path: str, config: Dict[str, Any]) -> Dict[str, An
         print("\n8. Saving RAW data...")
         save_raw_data(raw_data, config['OUTPUT_RAW_PATH'])
         results['output_path'] = config['OUTPUT_RAW_PATH']
-        
+        results['raw'] = raw_data
         # 9. 显示和保存RAW图为灰度图
         if config.get('DISPLAY_RAW_GRAYSCALE', False) or config.get('SAVE_RAW_GRAYSCALE', False):
             print("\n9. Processing RAW data for display...")
@@ -1091,7 +1102,6 @@ def invert_isp_pipeline(image_path: str, config: Dict[str, Any]) -> Dict[str, An
         
         report = {
             'timestamp': datetime.now().isoformat(),
-            'input_image': image_path,
             'output_raw': config['OUTPUT_RAW_PATH'],
             'config': safe_config,
             'processing_success': True,

@@ -1478,19 +1478,8 @@ def process_colorcheck_image(input_image_path: str, config: Dict) -> Dict:
                     if not np.isfinite(ml).all() or not np.isfinite(rl).all():
                         raise ValueError("NaN/Inf detected in input patches")
 
-                    # 拟合本轮CCM（提高第15块权重，索引14）
-                w15 = int(max(1, CONFIG.get('PATCH15_WEIGHT', 1))) if 'CONFIG' in globals() else 1
-                if w15 > 1 and len(kept_indices) >= 15 and 14 in kept_indices:
-                    local15 = kept_indices.index(14)
-                    rep_m = np.repeat(ml[local15:local15+1, :], w15-1, axis=0)
-                    rep_r = np.repeat(rl[local15:local15+1, :], w15-1, axis=0)
-                    ml_fit = np.concatenate([ml, rep_m], axis=0)
-                    rl_fit = np.concatenate([rl, rep_r], axis=0)
-                else:
-                    ml_fit = ml
-                    rl_fit = rl
-
-                    ccm_matrix_it = solve_ccm_gradient_optimization(ml_fit, rl_fit, ccm_config)
+                    # 拟合本轮CCM
+                    ccm_matrix_it = solve_ccm_gradient_optimization(ml, rl, ccm_config)
 
                     # 应用并评估
                     corrected_it = _apply_ccm(ml, ccm_matrix_it)
@@ -1773,22 +1762,9 @@ def save_ccm_images(isp_result: Dict, measured_patches: np.ndarray, reference_pa
         
         # 保存8位CCM矫正图像
         if ccm_corrected_image['ccm_corrected_8bit'] is not None:
-            ccm_8bit = ccm_corrected_image['ccm_corrected_8bit']
             ccm_8bit_path = output_dir / f'colorcheck_ccm_corrected_8bit_{timestamp}.png'
-            cv2.imwrite(str(ccm_8bit_path), ccm_8bit)
+            cv2.imwrite(str(ccm_8bit_path), ccm_corrected_image['ccm_corrected_8bit'])
             print(f"CCM corrected 8-bit image saved: {ccm_8bit_path}")
-            
-            # 另存一份gamma矫正后的8位图
-            try:
-                gamma = 2.2
-                ccm_8bit_float = np.clip(ccm_8bit.astype(np.float32) / 255.0, 0.0, 1.0)
-                ccm_8bit_gamma = np.power(ccm_8bit_float, 1.0 / gamma)
-                ccm_8bit_gamma_u8 = np.clip(ccm_8bit_gamma * 255.0, 0, 255).astype(np.uint8)
-                ccm_8bit_gamma_path = output_dir / f'colorcheck_ccm_corrected_8bit_gamma_{timestamp}.png'
-                cv2.imwrite(str(ccm_8bit_gamma_path), ccm_8bit_gamma_u8)
-                print(f"CCM corrected 8-bit (gamma) image saved: {ccm_8bit_gamma_path}")
-            except Exception as e:
-                print(f"Warning: failed to save gamma-corrected 8-bit image: {e}")
         
         # 保存16位CCM矫正图像
         if ccm_corrected_image['ccm_corrected_16bit'] is not None:

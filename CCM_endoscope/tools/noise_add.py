@@ -69,6 +69,12 @@ ADDITIVE_ZERO_MEAN: bool = False  # subtract mean of the selected patch before a
 SUBTRACT_DARK_AVERAGE_ENABLED: bool = True
 DARK_AVERAGE_FILENAME: Optional[str] = None  # if None, try 'dark_average.raw' then 'average.raw'
 
+# Hot-pixel suppression on the final noisy frame (mitigate bright dots introduced by additive frames)
+HOTPIXEL_SUPPRESS_ENABLED: bool = True
+HOTPIXEL_WINDOW: int = 5
+HOTPIXEL_K_STD: float = 5.0
+HOTPIXEL_ABS_MIN: float = 200.0
+
 
 def load_input_array(
     input_path: str,
@@ -502,6 +508,34 @@ def main() -> None:
         )
         
         noisy = np.clip(noisy, 0, 4095)
+
+    # Final hot-pixel suppression to remove abnormal bright dots after additive dark frames
+    if HOTPIXEL_SUPPRESS_ENABLED:
+        try:
+            # Work per-plane on Bayer grid to avoid color smearing (RGGB assumed)
+            h, w = noisy.shape[:2]
+            nfix = 0
+            def fix_plane(y0: int, x0: int) -> int:
+                nonlocal noisy
+                plane = noisy[y0::2, x0::2]
+                before = plane.copy()
+                fixed = _fix_hot_pixels_adaptive(
+                    plane.astype(np.float32),
+                    window_size=HOTPIXEL_WINDOW,
+                    k_std=HOTPIXEL_K_STD,
+                    abs_min=HOTPIXEL_ABS_MIN
+                ).astype(plane.dtype)
+                noisy[y0::2, x0::2] = fixed
+                # count changed pixels approximately
+                return int(np.count_nonzero((before - fixed) > 0))
+
+            nfix += fix_plane(0, 0)  # R
+            nfix += fix_plane(0, 1)  # G1
+            nfix += fix_plane(1, 0)  # G2
+            nfix += fix_plane(1, 1)  # B
+            print(f"Hot-pixel suppression applied on final noisy frame, corrected ~{nfix} pixels")
+        except Exception as e:
+            print(f"Warning: final hot-pixel suppression failed: {e}")
 
     # If requested, pass through ISP and save PNG
     if RUN_ISP and ext == '.raw':

@@ -345,6 +345,7 @@ def isp_invert_isp_test(raw_file: str, config: Dict[str, Any]) -> Dict[str, Any]
         # 1. 加载原始RAW图像
         print("\n1. Loading original RAW image...")
         raw_data = read_raw_image(raw_file, config['IMAGE_WIDTH'], config['IMAGE_HEIGHT'], config['DATA_TYPE'])
+        raw_data = raw_data.astype(np.float64)
         if raw_data is None:
             raise ValueError(f"Failed to load RAW image: {raw_file}")
         
@@ -412,6 +413,7 @@ def isp_invert_isp_test(raw_file: str, config: Dict[str, Any]) -> Dict[str, Any]
             'lens_shading_params': config.get('lens_shading_params')
         })
         
+        
         # 保存ISP结果为临时图像
         if isp_result['color_img'] is not None:
             cv2.imwrite(invert_config['INPUT_IMAGE_PATH'], isp_result['color_img'])
@@ -439,8 +441,21 @@ def isp_invert_isp_test(raw_file: str, config: Dict[str, Any]) -> Dict[str, Any]
         print(f"  Reconstructed RAW: {reconstructed_raw.shape}, range: {np.min(reconstructed_raw)}-{np.max(reconstructed_raw)}")
         results['reconstructed_raw_shape'] = list(reconstructed_raw.shape)
         
-        # 5. 跳过RAW图像PSNR计算
-        print("\n5. Skipping RAW PSNR calculation as requested")
+        # 5. 计算RAW图像PSNR
+        print("\n5. Calculating RAW PSNR...")
+        try:
+            ref = np.clip(raw_data.astype(np.float64), 0, 4095)
+            rec = np.clip(reconstructed_raw.astype(np.float64), 0, 4095)
+            mse = np.mean((ref - rec) ** 2)
+            if mse > 0:
+                psnr_raw = 10.0 * np.log10((4095.0 ** 2) / mse)
+            else:
+                psnr_raw = float('inf')
+            results['psnr_raw'] = psnr_raw
+            print(f"  RAW PSNR: {psnr_raw:.2f} dB")
+        except Exception as e:
+            print(f"  Warning: RAW PSNR calculation failed: {e}")
+            results['psnr_raw'] = None
         
         # 6. 第二次ISP处理（使用重建的RAW）
         print("\n6. Second ISP processing (using reconstructed RAW)...")
@@ -492,21 +507,25 @@ def isp_invert_isp_test(raw_file: str, config: Dict[str, Any]) -> Dict[str, Any]
             isp_result['color_img'], second_isp_result['color_img'],
             output_dir, results.get('isp_roi_info')
         )
-    except:
+    except Exception as e:
+        import traceback
         print(f"Error in ISP-Invert-ISP test: {e}")
+        traceback.print_exc()
+        results['error'] = str(e)
+        return results
     
-    return True
+    return results
 
 def main():
     """主函数"""
     # 配置参数
     config = {
         # 输入输出配置
-        'INPUT_RAW_PATH':r"F:\ZJU\Picture\invert_isp\inverted_output.raw",  # 输入RAW文件路径
+        'INPUT_RAW_PATH':r"F:\ZJU\Picture\ccm\ccm_2\dark_24\25-09-05 103522.raw",  # 输入RAW文件路径
         'OUTPUT_DIRECTORY': r"F:\ZJU\Picture\isp_invert_isp_test",  # 输出目录
         
         # 图像参数 - 可选择 1K 或 4K 分辨率
-        'RESOLUTION': '1K',  # 可选: '1K' (1920x1080) 或 '4K' (3840x2160)
+        'RESOLUTION': '4K',  # 可选: '1K' (1920x1080) 或 '4K' (3840x2160)
         'DATA_TYPE': 'uint16',
         
         # ISP参数路径

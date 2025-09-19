@@ -51,7 +51,7 @@ def demosaic_easy(raw_data: np.ndarray, bayer_pattern: str = 'rggb') -> Optional
                     b = raw_data[y+1, x+1]       # 右下角 B
                     
                     # 计算G的平均值
-                    g_avg = (g1 + g2) // 2
+                    g_avg = (g1 + g2) / 2
                     
                     # 为2x2块的所有像素设置相同的RGB值
                     # 左上角 (y, x)

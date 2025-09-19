@@ -226,9 +226,7 @@ def subtract_dark_current(raw_data: np.ndarray, dark_data: np.ndarray,
     print(f"  Original range: {np.min(raw_data)} - {np.max(raw_data)}")
     print(f"  Dark range: {np.min(dark_data)} - {np.max(dark_data)}")
     
-    # Ensure same data type for subtraction
-    if raw_data.dtype != dark_data.dtype:
-        raw_data = raw_data.astype(dark_data.dtype)
+
     
     # Subtract dark current
     corrected_data = raw_data.astype(np.float64) - dark_data.astype(np.float64)
@@ -412,11 +410,11 @@ def demosaic_16bit(raw_data: np.ndarray, bayer_pattern: str = 'rggb') -> np.ndar
             raw_norm = raw_clip / 4095.0
             rgb_float = _colour_demosaic(raw_norm, pattern=pat)
             # Convert RGB float [0,1] back to 16-bit (12-bit content)
-            rgb_16 = np.clip(np.round(rgb_float * 4095.0), 0, 4095).astype(np.uint16)
+            rgb_float = np.clip(rgb_float * 4095.0, 0, 4095)
             # Convert to BGR channel order for consistency with OpenCV usage downstream
-            bgr_16 = rgb_16[:, :, [2, 1, 0]]
-            print(f"  Demosaicing (colour) completed: {bgr_16.shape}, range: {np.min(bgr_16)}-{np.max(bgr_16)}")
-            return bgr_16
+            bgr_float = rgb_float[:, :, [2, 1, 0]]
+            print(f"  Demosaicing (colour) completed: {rgb_float.shape}, range: {np.min(rgb_float)}-{np.max(rgb_float)}")
+            return bgr_float
     except Exception as e:
         print(f"  colour_demosaicing failed, will fallback to OpenCV: {e}")
 
@@ -557,10 +555,10 @@ def apply_gamma_correction_16bit(color_image: np.ndarray, gamma: float = 2.2) ->
         img_float = color_image.astype(np.float64) / 4095.0
         
         # Apply gamma correction
-        img_gamma = np.power(img_float, 1.0 / gamma)
+        img_gamma = img_float ** (1.0 / gamma)  
         
         # Convert back to 16-bit
-        img_corrected = (img_gamma * 4095.0).astype(np.uint16)
+        img_corrected = img_gamma * 4095.0
         
         print(f"  Gamma correction applied: gamma={gamma}, range: {np.min(img_corrected)}-{np.max(img_corrected)}")
         return img_corrected
@@ -590,7 +588,7 @@ def apply_ccm_16bit(color_image: np.ndarray, ccm_matrix: np.ndarray, matrix_type
             raise ValueError(f"Unsupported matrix type: {matrix_type}")
         
         # 只裁剪负值，保持精度
-        corrected = np.clip(corrected, 0, None)
+        corrected = np.clip(corrected, 0, 4095)
 
         corrected = corrected[:, :, [2, 1, 0]]
         print(f"  CCM correction applied: {corrected.shape}, range: {np.min(corrected)}-{np.max(corrected)}")
@@ -663,12 +661,15 @@ def process_raw_array(raw_data: np.ndarray, dark_data: np.ndarray, lens_shading_
                 raw_for_demosaic = apply_white_balance_bayer(lens_corrected.astype(np.uint16), wb_params, 'rggb')
                 wb_applied_pre = True
             print(f"  4. Demosaicing in 16-bit domain...")
+            
             color_img_16bit = demosaic_16bit(raw_for_demosaic, 'rggb')
+            # print(f"mean:{np.mean(color_img_16bit)}")
+            
             if color_img_16bit is not None:
                 print(f"  4. 16-bit color image: {color_img_16bit.shape}, range: {np.min(color_img_16bit)}-{np.max(color_img_16bit)}")
                 
                 # 保存去马赛克后的图像用于对比
-                demosaiced_8bit = (color_img_16bit.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
+                demosaiced_8bit = np.round((color_img_16bit.astype(np.float32) / 4095.0) * 255.0).astype(np.uint8)
                 
                 # 5. Skip WB here if already applied on Bayer
                 if wb_applied_pre:
@@ -682,7 +683,7 @@ def process_raw_array(raw_data: np.ndarray, dark_data: np.ndarray, lens_shading_
                         print(f"  5. White balance correction skipped")
                 
                 # 保存白平衡后的图像用于对比
-                wb_corrected_8bit = (color_img_16bit.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
+                wb_corrected_8bit = np.round((color_img_16bit.astype(np.float32) / 4095.0) * 255.0).astype(np.uint8)
                 
                 # 6. CCM correction in 16-bit domain
                 if ccm_enabled:
@@ -693,6 +694,7 @@ def process_raw_array(raw_data: np.ndarray, dark_data: np.ndarray, lens_shading_
                         print(f"  6. Using provided CCM matrix: {ccm_matrix.shape}")
                         matrix_type = 'linear3x3'  # Default to linear3x3 for direct matrix input
                         color_img_16bit = apply_ccm_16bit(color_img_16bit, ccm_matrix, matrix_type)
+
                         print(f"  6. CCM correction applied to 16-bit image using provided matrix")
                     elif ccm_matrix_path is not None:
                         ccm_result = load_ccm_matrix(ccm_matrix_path)
@@ -709,9 +711,10 @@ def process_raw_array(raw_data: np.ndarray, dark_data: np.ndarray, lens_shading_
                 
                 # 在CCM矫正后进行clip，然后进行gamma矫正
                 color_img_16bit = np.clip(color_img_16bit, 0, 4095)
-                
+                print(f"mean:{np.mean(color_img_16bit)}")
+
                 # 保存CCM矫正后的图像用于对比
-                ccm_corrected_8bit = (color_img_16bit.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
+                ccm_corrected_8bit = np.round((color_img_16bit.astype(np.float32) / 4095.0) * 255.0).astype(np.uint8)
                 
                 # 7. Gamma correction (convert to nonlinear domain)
                 if gamma_correction_enabled:
@@ -722,14 +725,14 @@ def process_raw_array(raw_data: np.ndarray, dark_data: np.ndarray, lens_shading_
                     print(f"  7. Gamma correction skipped")
                 
                 # 保存伽马矫正后的图像用于对比
-                gamma_corrected_8bit = (color_img_16bit.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
+                gamma_corrected_8bit = np.round((color_img_16bit.astype(np.float32) / 4095.0) * 255.0).astype(np.uint8)
                 
                 # 8. Convert to 8-bit for display/saving
                 print(f"  8. Converting to 8-bit for display...")
                 # 
                 max_val = np.max(color_img_16bit)
                 if max_val > 0:
-                    color_img_8bit = (color_img_16bit.astype(np.float32) / 4095 * 255.0).astype(np.uint8)
+                    color_img_8bit = np.round((color_img_16bit.astype(np.float32) / 4095.0) * 255.0).astype(np.uint8)
                 else:
                     color_img_8bit = np.zeros_like(color_img_16bit, dtype=np.uint8)
                 print(f"  8. 8-bit color image: {color_img_8bit.shape}, range: {np.min(color_img_8bit)}-{np.max(color_img_8bit)}")
